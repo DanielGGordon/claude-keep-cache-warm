@@ -591,6 +591,8 @@ export const register: Register = on => {
     compact: 'Compact',
     'warm-then-compact': 'Warm → compact',
   }
+  /** One-key shortcuts, pressed once the bar has focus (ctrl+x tab, or a click). */
+  const HOTKEY: Record<Mode, string> = { warm: 'w', compact: 'c', 'warm-then-compact': 't' }
   /** Which mode button reads as pressed: the running mode, none while off or paused. */
   const isPressed = (view: View, m: Mode) => view.mode === m && view.kind !== 'paused'
 
@@ -610,17 +612,19 @@ export const register: Register = on => {
           </Text>
         </Box>
         {view.kind === 'paused' && (
-          <Button key="resume" label="Resume" variant="primary" onPress={resume} />
+          <Button key="resume" label="Resume" hotkey="r" variant="primary" onPress={resume} />
         )}
         {MODES.map(m => (
           <Button
             key={m}
-            label={SHORT[m]}
+            // The ● marks the running mode where a surface draws no color.
+            label={isPressed(view, m) ? `● ${SHORT[m]}` : SHORT[m]}
+            hotkey={HOTKEY[m]}
             variant={isPressed(view, m) ? 'primary' : 'secondary'}
             onPress={() => setMode(m)}
           />
         ))}
-        {view.kind !== 'off' && <Button key="off" label="Off" onPress={turnOff} />}
+        {view.kind !== 'off' && <Button key="off" label="Off" hotkey="o" onPress={turnOff} />}
       </Box>
     )
   })

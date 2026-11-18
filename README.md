@@ -30,7 +30,9 @@ A bar above the prompt shows the cache state and the mode buttons:
 
 `[Keep warm] [Compact] [Warm → compact] [Off]`
 
-It starts off in every session; pick a mode to turn it on for the current session. The running mode's button is highlighted.
+It starts off in every session; pick a mode to turn it on for the current session. The running mode's button is highlighted and marked ●.
+
+In a terminal, click a button, or press **ctrl+x** then **tab** to focus the bar and use its keys: **w** Keep warm, **c** Compact, **t** Warm → compact, **o** Off, **r** Resume. **Esc** returns to the prompt.
 
 | Mode | What happens about 5 minutes before the cache expires | Bar color |
 |---|---|---|
@@ -61,6 +63,8 @@ If a ping finds the cache already cold (it read less than half its input from th
 Each ping is a real, billed turn: a cache read of the conversation plus a one-word reply. Each compaction is a model call too. Both are usually much cheaper than rewriting a large cache from scratch.
 
 ## Development
+
+See [HANDOFF.md](HANDOFF.md) for the current state, what is verified, open items and the build history.
 
 - `hooks/register.tsx`: hooks, timers and the bar.
 - `hooks/logic.ts`: the state machine and texts, with no engine calls.
