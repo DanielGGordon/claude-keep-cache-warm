@@ -372,7 +372,22 @@ test('background subagents hold the ping until they finish', async ($, on) => {
   await w.start()
   await w.press('warm')
   await w.user('hello', 'u1')
-  w.agents = [{ id: 'a1', description: 'explore', type: 'Explore', status: 'running' }]
+  w.agents = [
+    {
+      id: 'a1',
+      description: 'explore',
+      type: 'Explore',
+      status: 'running',
+      kind: 'local_agent',
+      taskStatus: 'running',
+      label: 'explore',
+      startTime: T0,
+      cwd: '/',
+      tokenCount: 0,
+      tokenSamples: [],
+      hasRow: true,
+    },
+  ]
   await w.clock.set(T0 + 55 * MIN)
   expect(w.pings().length).toBe(0)
   expect(w.status()).toBe('Cache: busy')
