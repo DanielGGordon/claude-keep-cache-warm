@@ -1,0 +1,285 @@
+// Pure logic for keep-cache-warm: constants, the cache state machine and the
+// display texts. No `$` here, so tests/logic.test.ts can exercise it alone.
+// Ported from t3code's packages/shared/src/cacheKeepAlive.ts.
+
+import type { ModelUsage, PromptOrigin } from 'claude-code'
+
+import type { KeepWarm, Kind, Mode, View } from '../types'
+
+export const NAME = 'keep-cache-warm'
+
+/** The prompt cache lasts an hour from the model's last request. */
+export const TTL_MS = 60 * 60_000
+/** Ping this long before the cache expires. */
+export const LEAD_MS = 5 * 60_000
+/** Pings in a row with no message from the person before pausing. */
+export const MAX_PINGS = 8
+/** Submit attempts per idle period; only a thrown submit retries. */
+export const MAX_ATTEMPTS = 3
+export const RETRY_MS = 30_000
+/** How often a ping held by running background subagents is checked again. */
+export const HOLD_RECHECK_MS = 60_000
+/** A claimed ping counts as in flight (busy) for this long. */
+export const FRESH_FIRE_MS = 2 * 60_000
+/** After an accepted submit, count the ping here if turn.start did not. */
+export const COUNT_FALLBACK_MS = 60_000
+/** A re-check later than this past an armed deadline re-arms the ping timer. */
+export const ARM_SLACK_MS = 5_000
+
+/** Exactly the text the spec gives. */
+export const PING_TEXT =
+  'Keep-alive ping to keep the prompt cache warm. No action needed — just reply “ok”.'
+/** What recognises the ping turn at turn.start. */
+export const PING_MARK = 'Keep-alive ping to keep the prompt cache warm.'
+/** The mod's own early guard drop: benign, so no toast. */
+export const OWN_DROP = 'keep-cache-warm: ping no longer needed'
+/** What a stale ping turn answers instead of sending a request. */
+export const STALE_ANSWER = 'ok (keep-cache-warm skipped this ping: the cache no longer needed it)'
+export const HEARTBEAT_RE = /subagent[- ]heartbeat|subagent-status\.sh/i
+
+export const INITIAL: KeepWarm = {
+  isEnabled: false,
+  mode: 'warm',
+  compactedAt: null,
+  lastOutputAt: null,
+  busyTurnId: null,
+  busySince: null,
+  hasFailed: false,
+  consecutivePings: 0,
+  pausedAt: null,
+  pauseReason: null,
+  lastPingAnchor: null,
+  pingFiredAt: null,
+  countedClaim: null,
+  pingTurnId: null,
+  isPingTurnStale: false,
+  pingAttempts: 0,
+  lastUserAt: null,
+  isHeldByBackground: false,
+  hasHeartbeat: false,
+}
+
+export type CacheState = {
+  kind: Kind
+  expiresAt: number | null
+  pingAt: number | null
+  /** Time left on a live cache; null when there is none or it has expired. */
+  remainingMs: number | null
+}
+
+/** "42m", rounded down to whole minutes; "<1m" under a minute. */
+export function formatRemaining(ms: number): string {
+  const minutes = Math.floor(ms / 60_000)
+  return minutes < 1 ? '<1m' : `${minutes}m`
+}
+
+/** A claimed ping still in flight. */
+export function isFiring(s: KeepWarm, now: number): boolean {
+  return s.pingFiredAt !== null && now - s.pingFiredAt < FRESH_FIRE_MS
+}
+
+export const MODES: readonly Mode[] = ['warm', 'compact', 'warm-then-compact']
+
+/** Button labels, and the band's title while the mode runs. */
+export const MODE_LABEL: Record<Mode, string> = {
+  warm: 'Keep warm',
+  compact: 'Compact before expiry',
+  'warm-then-compact': `Warm, then compact after ${MAX_PINGS}`,
+}
+const MODE_TITLE: Record<Mode, string> = {
+  warm: 'Keeping cache warm',
+  compact: 'Compacting before the cache expires',
+  'warm-then-compact': `Keeping cache warm, then compacting after ${MAX_PINGS} pings`,
+}
+/**
+ * Explicit colors (theme keys are not drawn everywhere): t3code's warm orange,
+ * compact blue and warm-then-compact violet, plus the state colors.
+ */
+export const MODE_COLOR: Record<Mode, string> = {
+  warm: '#d97757',
+  compact: '#3b82f6',
+  'warm-then-compact': '#8b5cf6',
+}
+export const STATE_COLOR = {
+  off: '#9ca3af',
+  paused: '#d97706',
+  cold: '#dc2626',
+  compacted: '#16a34a',
+} as const
+
+/**
+ * Paused and stopped. In warm-then-compact a spent ping budget is not a stop:
+ * the next action becomes a compaction (t3code's cacheKeepAliveActive).
+ */
+export function isHalted(s: KeepWarm): boolean {
+  return s.pausedAt !== null && !(s.mode === 'warm-then-compact' && s.pauseReason === 'limit')
+}
+
+/** What goes out before the cache expires: a ping, or a compaction. */
+export function nextAction(s: KeepWarm): 'ping' | 'compact' {
+  return s.mode === 'compact' || (s.mode === 'warm-then-compact' && s.pausedAt !== null)
+    ? 'compact'
+    : 'ping'
+}
+
+/** The state machine, first match wins (t3code section 3, plus "waiting"). */
+export function cacheState(s: KeepWarm, now: number, isWaiting = false): CacheState {
+  const expiresAt = s.lastOutputAt === null ? null : s.lastOutputAt + TTL_MS
+  const pingAt = expiresAt === null ? null : expiresAt - LEAD_MS
+  const remainingMs = expiresAt === null || now >= expiresAt ? null : expiresAt - now
+  const at = (kind: Kind): CacheState => ({ kind, expiresAt, pingAt, remainingMs })
+
+  if (!s.isEnabled) return at('off')
+  if (isHalted(s)) return at('paused')
+  if (isWaiting) return at('waiting')
+  if (s.busyTurnId !== null || isFiring(s, now)) return at('busy')
+  if (s.hasFailed) return at('cold')
+  if (s.compactedAt !== null && s.lastOutputAt === null) return at('compacted')
+  if (remainingMs === null || pingAt === null) return at('cold')
+  if (s.isHeldByBackground) return at('busy')
+  if (now >= pingAt) return at('due')
+  return at('scheduled')
+}
+
+/**
+ * When the next ping should go out, or null when none should be armed:
+ * off, paused, a turn running, a ping in flight, a failed turn, no output,
+ * an expired cache, a ping already claimed for this anchor, or retries spent.
+ * Background subagents are checked at fire time, not here.
+ */
+export function nextPingAt(s: KeepWarm, now: number): number | null {
+  if (!s.isEnabled || isHalted(s) || s.hasFailed) return null
+  if (s.busyTurnId !== null || isFiring(s, now)) return null
+  if (s.lastOutputAt === null || now >= s.lastOutputAt + TTL_MS) return null
+  if (s.lastPingAnchor === s.lastOutputAt) return null
+  if (s.pingAttempts >= MAX_ATTEMPTS) return null
+  return s.lastOutputAt + TTL_MS - LEAD_MS
+}
+
+export function isClaimable(s: KeepWarm, now: number): boolean {
+  const at = nextPingAt(s, now)
+  return at !== null && now >= at
+}
+
+/**
+ * Whether a claimed ping is no longer wanted by the time its turn starts
+ * (the authoritative, dequeue-time guard).
+ */
+export function isStalePing(s: KeepWarm, now: number): boolean {
+  if (!s.isEnabled || s.pausedAt !== null || s.hasFailed || nextAction(s) !== 'ping') return true
+  if (s.lastOutputAt === null || s.lastOutputAt !== s.lastPingAnchor) return true
+  if (now >= s.lastOutputAt + TTL_MS) return true
+  return s.lastUserAt !== null && s.pingFiredAt !== null && s.lastUserAt > s.pingFiredAt
+}
+
+/** A ping whose request read less than half its input from the cache found it cold. */
+export function isCacheCold(usage: ModelUsage): boolean {
+  const total = usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens
+  return total > 0 && usage.cache_read_input_tokens < total / 2
+}
+
+const USER_KINDS: ReadonlySet<PromptOrigin['kind']> = new Set([
+  'composer',
+  'bridge',
+  'sdk',
+  'slack-ping',
+  'channel',
+])
+
+/**
+ * A message from the person, which resets the ping budget. Autonomous
+ * sources (auto-continuation, unclassified, notifications, schedules, peers,
+ * every plugin, this one's pings included) never do.
+ */
+export function isUserOrigin(origin: PromptOrigin, isMeta: boolean): boolean {
+  return !isMeta && USER_KINDS.has(origin.kind)
+}
+
+export function statusText(st: CacheState): string {
+  switch (st.kind) {
+    case 'scheduled':
+    case 'due':
+      return `Cache: ${formatRemaining(st.remainingMs ?? 0)}`
+    default:
+      return `Cache: ${st.kind}`
+  }
+}
+
+export function toView(s: KeepWarm, now: number, isWaiting = false): View {
+  const st = cacheState(s, now, isWaiting)
+  const left = st.remainingMs === null ? '' : ` · cache ${formatRemaining(st.remainingMs)} left`
+  const sent =
+    s.consecutivePings > 0
+      ? ` · ${s.consecutivePings} of ${MAX_PINGS} pings since your last message`
+      : ''
+  const heartbeat = s.hasHeartbeat ? ' · also kept warm by the subagent heartbeat' : ''
+  const title = MODE_TITLE[s.mode]
+  const action: 'ping' | 'compaction' = nextAction(s) === 'compact' ? 'compaction' : 'ping'
+  let band: string
+  let color: string = MODE_COLOR[s.mode]
+  switch (st.kind) {
+    case 'off':
+      band = `Keep cache warm: off${left}`
+      color = STATE_COLOR.off
+      break
+    case 'paused':
+      color = STATE_COLOR.paused
+      band =
+        s.pauseReason === 'not-caching'
+          ? `Keep cache warm paused: the last ping found the cache already cold, so it is not lasting an hour here${left}`
+          : `Keep cache warm paused after ${MAX_PINGS} pings with no message from you${left}`
+      break
+    case 'waiting':
+      band = `${title} · waiting on you${left}`
+      break
+    case 'busy': {
+      const what =
+        s.busyTurnId !== null
+          ? 'turn running'
+          : isFiring(s, now)
+            ? action === 'compaction'
+              ? 'compacting'
+              : 'sending keep-alive ping'
+            : `${action} held while background subagents run`
+      band = `${title} · ${what}${left}`
+      break
+    }
+    case 'compacted':
+      color = STATE_COLOR.compacted
+      band = `${title} · compacted before the cache expired; your next message starts a fresh cache`
+      break
+    case 'cold':
+      color = STATE_COLOR.cold
+      band = s.hasFailed
+        ? `${title} · last turn failed, so nothing is sent until a turn succeeds${left}`
+        : s.lastOutputAt === null
+          ? `${title} · no cached conversation yet; your next message warms it`
+          : `${title} · cache expired; your next message warms it`
+      break
+    case 'due':
+      band = `${title}${left} · ${action} due now${sent}`
+      break
+    case 'scheduled':
+      band = `${title}${left} · ${action} in ${formatRemaining((st.pingAt ?? now) - now)}${sent}`
+      break
+  }
+  return {
+    kind: st.kind,
+    mode: s.isEnabled ? s.mode : null,
+    color,
+    status: statusText(st),
+    band: band + heartbeat,
+  }
+}
+
+export function pingToast(n: number, mode: Mode = 'warm'): string {
+  if (n < MAX_PINGS) return `Keep-alive ping sent to keep the prompt cache warm (${n} of ${MAX_PINGS}).`
+  return mode === 'warm-then-compact'
+    ? `Keep-alive ping ${MAX_PINGS} of ${MAX_PINGS} sent with no message from you. Next time, the conversation is compacted before the cache expires instead of pinged.`
+    : `Keep cache warm paused: ${MAX_PINGS} pings in a row with no message from you (the ${MAX_PINGS}th just went out). The cache stays warm for about another hour; send a message or press Resume to continue.`
+}
+
+export function notCachingToast(usage: ModelUsage): string {
+  const total = usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens
+  return `Keep cache warm paused: the ping found the cache already cold (${usage.cache_read_input_tokens} of ${total} input tokens read from cache), so the cache is not lasting an hour here. Press Resume to try again.`
+}

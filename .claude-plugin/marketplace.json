@@ -1,0 +1,5 @@
+{
+  "name": "claude-keep-cache-warm",
+  "owner": { "name": "DanielGGordon" },
+  "plugins": [{ "name": "keep-cache-warm", "source": "./" }]
+}
