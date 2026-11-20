@@ -515,7 +515,7 @@ test('compact mode compacts 5 minutes before expiry instead of pinging, once, un
   expect(w.logs).toEqual([])
 })
 
-test('a vetoed compaction toasts and is final for its idle period', async ($, on) => {
+test('a vetoed compaction toasts, stays in the bar, and a keep-alive ping keeps the cache warm instead', async ($, on) => {
   const w = world($, on)
   await w.start()
   w.compactAnswer = { skip: 'a hook said no' }
@@ -523,11 +523,57 @@ test('a vetoed compaction toasts and is final for its idle period', async ($, on
   await w.user('hello', 'u1')
   await w.clock.advance(55 * MIN)
   expect(w.toasts).toContain('Compaction skipped: a hook said no')
-  // ...and the bar keeps saying so, rather than "compaction due now".
-  expect(w.status()).toBe('Cache: failed')
-  expect(await w.bandText()).toContain('compaction skipped: a hook said no')
-  await w.clock.advance(4 * MIN)
   expect(w.compactions.length).toBe(1)
+  // One ping stands in for the failed compaction.
+  expect(w.pings().length).toBe(1)
+  await w.pingTurn('p1')
+  // ...and the bar keeps saying what happened, rather than "compaction due now".
+  expect(w.status()).toBe('Cache: failed')
+  expect(await w.bandText()).toContain('compaction skipped: a hook said no; a keep-alive ping was sent instead')
+  // The next idle period tries to compact again; nothing more goes out before it.
+  await w.clock.advance(50 * MIN)
+  expect(w.compactions.length).toBe(1)
+  expect(w.pings().length).toBe(1)
+})
+
+test('a compaction that keeps failing stands in pings only up to the budget', async ($, on) => {
+  const w = world($, on)
+  await w.start()
+  w.compactAnswer = { skip: 'never' }
+  await w.press('compact')
+  await w.user('hello', 'u1')
+  for (let i = 1; i <= 10; i += 1) {
+    await w.clock.advance(55 * MIN)
+    if (w.pings().length === i) await w.pingTurn(`p${i}`)
+  }
+  expect(w.pings().length).toBe(8)
+  expect(w.status()).toBe('Cache: paused')
+})
+
+test('the maxPings setting sets the budget', { options: { maxPings: 2 } }, async ($, on) => {
+  const w = world($, on)
+  await w.start()
+  await w.press('warm')
+  await w.user('hello', 'u1')
+  expect(await w.bandText()).toContain('Keeping cache warm')
+  await w.clock.advance(55 * MIN)
+  await w.pingTurn('p1')
+  expect(await w.bandText()).toContain('1 of 2 pings sent')
+  await w.clock.advance(55 * MIN)
+  await w.pingTurn('p2')
+  expect(w.status()).toBe('Cache: paused')
+  expect(await w.bandText()).toContain('paused after 2 pings')
+  await w.clock.advance(55 * MIN)
+  expect(w.pings().length).toBe(2)
+})
+
+test('the defaultMode setting starts a new session in that mode, until the person picks', { options: { defaultMode: 'warm' } }, async ($, on) => {
+  const w = world($, on)
+  await w.start()
+  await w.user('hello', 'u1')
+  expect(await w.bandText()).toContain('Keeping cache warm · ping in 55m')
+  await w.press('off')
+  expect(await w.bandText()).toContain('Keep cache warm: off')
 })
 
 test('warm-then-compact pings 8 times, then compacts instead of pausing', async ($, on) => {

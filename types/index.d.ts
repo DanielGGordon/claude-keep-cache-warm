@@ -46,6 +46,10 @@ export type KeepWarm = {
    * past its retries). Shown in the bar until the person acts or one succeeds.
    */
   lastProblem: string | null
+  /** The claimed ping stands in for a compaction that failed (one per idle period, inside the budget). */
+  isFallbackPing: boolean
+  /** The person picked a mode or Off in this session; until then the `defaultMode` setting applies. */
+  isTouched: boolean
 }
 
 export type Kind =

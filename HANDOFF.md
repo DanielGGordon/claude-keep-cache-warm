@@ -17,7 +17,7 @@ Requirements it was built against (from the original ask):
 
 ## Current state (2026-11-20)
 
-Done and passing: `claude plugin validate .` (warnings only), `claude plugin test .` (41 of 41).
+Done and passing: `claude plugin validate .` (warnings only), `claude plugin test .` (44 of 44). Version 0.3.0 adds settings (`defaultMode`, `maxPings`), focus that follows the hotkey, and a fallback ping when a compaction fails.
 
 | Area | State |
 |---|---|
@@ -47,10 +47,9 @@ Ping and compaction runs used a short-timer variant (`TTL_MS` 6 min, `MAX_PINGS`
 ### Not yet verified live
 
 1. The full 8-ping budget on the shipped timers (about 7 hours), and Resume after it.
-2. A physical mouse click in Windows Terminal (a simulated click did nothing; Desktop clicks work).
+2. Clicks in Windows Terminal: they work with the fullscreen renderer (`/tui fullscreen`, verified), not with the classic one (it takes no mouse).
 3. Machine sleep/wake across the deadline.
 4. macOS and Linux.
-5. When compaction fails nothing pings in its place (by design: the failure is shown); a fallback ping is a possible addition.
 
 ### Known small issues (from the Fable 5.2 code review, all low severity)
 
@@ -93,5 +92,4 @@ Mod-authoring rules worth knowing:
 ## Ideas not done
 
 - Hold pings while the person has a draft in the composer (`$.prompt.read()`).
-- A configurable ping budget (`userConfig`) instead of the fixed 8.
 - Recognising the subagent heartbeat from t3code more fully (only shown in the bar now).

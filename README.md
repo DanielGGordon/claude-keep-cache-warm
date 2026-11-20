@@ -30,9 +30,9 @@ A bar above the prompt shows the cache state and the mode buttons:
 
 `[Keep warm] [Compact] [Warm → compact] [Off]`
 
-It starts off in every session; pick a mode to turn it on for the current session. The running mode's button is highlighted and marked ●.
+It starts off in every session (unless you change that in its settings); pick a mode to turn it on for the current session. The running mode's button is highlighted and marked ●.
 
-In a terminal, press **ctrl+x** then **tab** to focus the bar and use its keys (each button shows its letter; a click also works where the terminal reports the mouse, which depends on the terminal): **w** Keep warm, **c** Compact, **t** Warm → compact, **o** Off, **r** Resume. **Esc** returns to the prompt.
+In a terminal, press **ctrl+x** then **tab** to focus the bar and use its keys (each button shows its letter). With Claude Code's fullscreen renderer (`/tui fullscreen`) a mouse click on a button works too; the classic renderer takes no clicks: **w** Keep warm, **c** Compact, **t** Warm → compact, **o** Off, **r** Resume. **Esc** returns to the prompt.
 
 | Mode | What happens about 5 minutes before the cache expires | Bar color |
 |---|---|---|
@@ -54,13 +54,24 @@ Toasts tell you when a ping goes out (`1 of 8`), what it got from the cache (`Pi
 
 The Code tab is a headless session, where the engine refuses a plugin's compact call. The mod notices and runs the `/compact` command instead (you will see a `/compact` message in the transcript, after a `keep-cache-warm:` line saying why). The Desktop app also draws a ping as if you had typed it, so the mod writes a `keep-cache-warm: sending a keep-alive ping …` line just before each one; the terminal labels the row itself.
 
+## Settings
+
+Two settings, under `/config` (search "keep") or in the Desktop app's plugin settings:
+
+| Setting | Default | What it does |
+|---|---|---|
+| **Start each session in** | `off` | The mode a new session starts in: `off`, `warm`, `compact` or `warm-then-compact`. Picking a mode or Off in the bar wins for that session. |
+| **Pings before it stops** | `8` | Pings in a row with no message from you before Keep warm pauses and Warm → compact compacts instead (1 to 50). |
+
+They are stored in `settings.json` under `pluginConfigs["keep-cache-warm@claude-keep-cache-warm"].options` (`defaultMode`, `maxPings`); a change reloads the mod at once.
+
 ## When it does nothing
 
 - while a turn is running or waiting on you (a permission prompt or a question);
 - while background subagents are running;
 - after a failed turn, until a turn succeeds;
 - once the cache has already expired (a ping then would only pay for a full cache write);
-- after 8 pings in a row with no message from you, in **Keep warm** mode. A message from you, or **Resume**, restores the count.
+- after 8 pings in a row (or your **Pings before it stops** setting) with no message from you, in **Keep warm** mode. A message from you, or **Resume**, restores the count.
 
 Only messages you type count as messages from you. Task notifications, scheduled triggers, auto-continuations and other plugins don't reset the count.
 
@@ -71,6 +82,8 @@ If a ping finds the cache already cold (it read less than half its input from th
 A ping on a 44.6K-token conversation, 55 minutes after the previous request, read 44,585 tokens from the cache, wrote 50 and produced 4 output tokens (measured on a real run). One caveat: a conversation that has made only a single request may already have lost the cache of its own part after the engine's short window, so its first ping re-writes that part (about 12.8K tokens in the same test) and every ping after it reads the whole thing. If a ping reads under half its input from the cache, the mod pauses and says so.
 
 Each ping is a real, billed turn: a cache read of the conversation plus a one-word reply. Each compaction is a model call too. Both are usually much cheaper than rewriting a large cache from scratch.
+
+If a compaction fails (refused, vetoed, or erroring three times), the bar says why and, while there is time and ping budget left, one keep-alive ping goes out in its place so the cache does not expire; it counts against the budget.
 
 ## Development
 
