@@ -46,9 +46,12 @@ function world($: Engine, on: On) {
     statuses: [] as string[],
     toasts: [] as string[],
     logs: [] as string[],
+    /** Lines the mod put in the transcript (ui.log to 'transcript'). */
+    notes: [] as string[],
     submits: [] as PromptSubmitInput[],
     steps: 0,
     compactions: [] as string[],
+
     compactAnswer: { messages: [{ role: 'user', text: 'Summary of the conversation so far.', toolUses: [] }] } as SessionCompactResult,
     usage: WARM as TurnUsage | null,
     agents: [] as AgentInfo[],
@@ -106,7 +109,7 @@ function world($: Engine, on: On) {
     return { value: undefined }
   })
   on('ui.log', (_, e) => {
-    w.logs.push(e.text)
+    ;(e.to === 'transcript' ? w.notes : w.logs).push(e.text)
     return { value: undefined }
   })
   on('agent.list', () => ({ value: w.agents }))
@@ -114,6 +117,7 @@ function world($: Engine, on: On) {
     w.compactions.push('plugin')
     return w.compactAnswer
   })
+
   on('prompt.submit', (_, e) => {
     w.submits.push(e)
     const answer = w.answer(e)
@@ -142,7 +146,7 @@ function world($: Engine, on: On) {
 test('countdown floors minutes; one ping at +55m with the exact text; its own ping does not reset the count', async ($, on) => {
   const w = world($, on)
   await w.start()
-  expect(w.status()).toBe('Cache: off')
+  expect(w.status() ?? '').toBe('')
 
   await w.press('warm')
   expect(w.status()).toBe('Cache: cold')
@@ -168,7 +172,7 @@ test('countdown floors minutes; one ping at +55m with the exact text; its own pi
   await w.pingTurn('p1')
   expect(w.toasts).toContain('Keep-alive ping sent to keep the prompt cache warm (1 of 8).')
   expect(w.status()).toBe('Cache: 60m')
-  expect(await w.bandText()).toContain('1 of 8 pings since your last message')
+  expect(await w.bandText()).toContain('1 of 8 pings sent')
 
   // The count fallback does not count it twice.
   await w.clock.advance(2 * MIN)
@@ -304,7 +308,9 @@ test('a dropped ping toasts, is final for its idle period, and the cache goes co
   expect(w.pings().length).toBe(1)
   expect(w.toasts).toContain('Keep-alive ping not sent: a host limit was reached')
   await w.clock.set(T0 + 60 * MIN - 1)
-  expect(w.status()).toBe('Cache: <1m')
+  // The refusal stays in the bar until the cache expires, instead of reading "due now".
+  expect(w.status()).toBe('Cache: failed')
+  expect(await w.bandText()).toContain('ping not sent: a host limit was reached')
   await w.clock.set(T0 + 60 * MIN + 200)
   expect(w.status()).toBe('Cache: cold')
   await w.clock.advance(2 * 60 * MIN)
@@ -328,7 +334,7 @@ test('turning it off cancels the ping', async ($, on) => {
   await w.press('warm')
   await w.user('hello', 'u1')
   await w.press('off')
-  expect(w.status()).toBe('Cache: off')
+  expect(w.status() ?? '').toBe('')
   expect(await w.bandText()).toContain('Keep cache warm: off · cache 60m left')
   await w.clock.set(T0 + 59 * MIN)
   expect(w.pings().length).toBe(0)
@@ -431,7 +437,7 @@ test('/clear turns it off and forgets the cache', async ($, on) => {
   await w.user('hello', 'u1')
   await $.session.end({ reason: 'clear', sessionId: 's1', resume: { id: 's1' } })
   await w.clock.settle()
-  expect(w.status()).toBe('Cache: off')
+  expect(w.status() ?? '').toBe('')
   await w.clock.advance(60 * MIN)
   expect(w.pings().length).toBe(0)
 })
@@ -447,12 +453,50 @@ test('the band draws on terminal, desktop and mobile', async ($, on) => {
   }
 })
 
+test('a long state stacks the text over the buttons, so Off is always reachable', async ($, on) => {
+  const w = world($, on)
+  await w.start()
+  await w.press('warm-then-compact')
+  await w.user('hello', 'u1')
+  for (const surface of ['desktop', 'terminal'] as const) {
+    const props = { ...BAND.props, bodyColumns: surface === 'terminal' ? 60 : 120 }
+    const ui = await $.ui.mount({ ...BAND, props, surface })
+    expect((await ui.find({ type: 'Text' }))?.text).toContain('Warm → compact')
+    for (const key of ['warm', 'compact', 'warm-then-compact', 'off']) {
+      expect(await ui.find({ key })).toBeDefined()
+    }
+    await ui.unmount()
+  }
+})
+
+test('a ping is noted in the transcript where the surface shows it as the person\'s own message', async ($, on) => {
+  const w = world($, on)
+  await w.start()
+  // The terminal labels the ping row itself: no note.
+  const terminal = await w.band('terminal')
+  await terminal.press({ key: 'warm' })
+  await terminal.unmount()
+  await w.clock.settle()
+  await w.user('hello', 'u1')
+  await w.clock.set(T0 + 55 * MIN)
+  expect(w.pings().length).toBe(1)
+  expect(w.notes).toEqual([])
+  // A desktop shows it as a user bubble, so the transcript says who sent it.
+  const desktop = await w.band('desktop')
+  await desktop.unmount()
+  await w.pingTurn('p1')
+  await w.clock.set(T0 + 55 * MIN + 55 * MIN + 10)
+  expect(w.pings().length).toBe(2)
+  expect(w.notes).toContain('sending a keep-alive ping automatically (not typed by you) to keep the prompt cache warm')
+  expect(w.notes.some(n => n.includes('Ping read 100% of its 50.1K input tokens from the cache.'))).toBe(true)
+})
+
 test('compact mode compacts 5 minutes before expiry instead of pinging, once, until you write again', async ($, on) => {
   const w = world($, on)
   await w.start()
   await w.press('compact')
   await w.user('hello', 'u1')
-  expect(await w.bandText()).toContain('Compacting before the cache expires')
+  expect(await w.bandText()).toContain('Compacting before expiry')
   expect(await w.bandText()).toContain('compaction in 55m')
   await w.clock.set(T0 + 55 * MIN - 1)
   expect(w.compactions).toEqual([])
@@ -479,6 +523,9 @@ test('a vetoed compaction toasts and is final for its idle period', async ($, on
   await w.user('hello', 'u1')
   await w.clock.advance(55 * MIN)
   expect(w.toasts).toContain('Compaction skipped: a hook said no')
+  // ...and the bar keeps saying so, rather than "compaction due now".
+  expect(w.status()).toBe('Cache: failed')
+  expect(await w.bandText()).toContain('compaction skipped: a hook said no')
   await w.clock.advance(4 * MIN)
   expect(w.compactions.length).toBe(1)
 })
@@ -493,7 +540,7 @@ test('warm-then-compact pings 8 times, then compacts instead of pausing', async 
     expect(w.pings().length).toBe(i)
     await w.pingTurn(`p${i}`)
   }
-  expect(w.toasts.some(t => t.startsWith('Keep-alive ping 8 of 8 sent'))).toBe(true)
+  expect(w.toasts.some(t => t.startsWith('Ping 8 of 8 sent'))).toBe(true)
   expect(w.status()).toBe('Cache: 60m')
   expect(await w.bandText()).toContain('compaction in 55m')
   await w.clock.advance(55 * MIN)

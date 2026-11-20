@@ -41,6 +41,11 @@ export type KeepWarm = {
   isHeldByBackground: boolean
   /** Display only: a background shell task looks like the subagent heartbeat. */
   hasHeartbeat: boolean
+  /**
+   * Why the last ping or compaction did not happen (refused, vetoed, or failed
+   * past its retries). Shown in the bar until the person acts or one succeeds.
+   */
+  lastProblem: string | null
 }
 
 export type Kind =
@@ -49,6 +54,7 @@ export type Kind =
   | 'waiting'
   | 'busy'
   | 'cold'
+  | 'problem'
   | 'compacted'
   | 'scheduled'
   | 'due'

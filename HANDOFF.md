@@ -15,9 +15,9 @@ Requirements it was built against (from the original ask):
 - First check whether a mod can send a message on its own timer; if not, fall back to a background command that wakes the session (~55 min). **It can** (`$.clock.after` + `$.prompt.submit`), so the fallback was not built.
 - Added later at the user's request: t3code's three modes (**Keep warm**, **Compact**, **Warm → compact**), color, and terminal keyboard shortcuts.
 
-## Current state (2026-11-18)
+## Current state (2026-11-20)
 
-Done and passing: `claude plugin validate .` (warnings only), `claude plugin test .` (35 of 35), type-check clean.
+Done and passing: `claude plugin validate .` (warnings only), `claude plugin test .` (41 of 41).
 
 | Area | State |
 |---|---|
@@ -28,18 +28,29 @@ Done and passing: `claude plugin validate .` (warnings only), `claude plugin tes
 | Colors | explicit hex in `hooks/logic.ts` (`MODE_COLOR`, `STATE_COLOR`) |
 | Side panel | **removed** on purpose (the user found it extra). Don't add it back. |
 
-### Verified live
+### Verified live (Windows 11 VM, CLI 2.1.327-329 in Windows Terminal, Claude Desktop 4.29.0, 2026-11-20)
 
-- Desktop app (after a full app restart): the bar and the status line render; toggling works.
-- CLI 2.1.325 in a Windows Command Prompt: the bar, all three modes, Off, the `●` marker and the status line work by mouse click.
-- An earlier build agent confirmed in a scripted `claude -p --input-format stream-json` session that a timer-sent `$.prompt.submit` starts a turn by itself in an idle session (model call stubbed).
+Ping and compaction runs used a short-timer variant (`TTL_MS` 6 min, `MAX_PINGS` 2); everything else is the shipped code.
+
+- Install from the GitHub marketplace (`claude plugin marketplace add` then `claude plugin install keep-cache-warm@claude-keep-cache-warm`); the README's one-command form (`claude plugin install keep-cache-warm --marketplace DanielGGordon/claude-keep-cache-warm`) also works in a clean profile, and the Desktop app's own flow (**+** > Add plugins > **+** > Add from a repository > Sync > **+**) installs it with no restart needed.
+- Real pings answered by the model, real compaction after the ping budget, on **both** surfaces. Bar colors, the `●` marker, hotkeys `w c t o` (after `ctrl+x tab`) in the CLI, chip clicks on Desktop.
+- **Desktop is headless**: `$.session.compact()` is refused there ("not available in a headless (-p / SDK) session yet"). The mod falls back to `$.command.run({ command: 'compact' })` and remembers it (`compactViaCommand`). Before this fix Desktop compaction silently never happened.
+- Failures set `lastProblem` (state `failed`, red bar, `Cache: failed`, a transcript line via `$.ui.log(..., { to: 'transcript' })`, which Desktop draws as a labelled row; toasts are not obviously visible on Desktop).
+- Bar layout: text over buttons (stacked) on Desktop, and on the terminal whenever text plus buttons would not fit in `bodyColumns`.
+
+### Also verified live (final build)
+
+- Real shipped timers: a CLI ping 55 minutes after the previous request read 44,585 of 44,639 input tokens from the cache (99.9%) and wrote 50; a Desktop compaction fired unattended at 55 minutes (72.1K to 9.5K tokens).
+- Pause and Resume (click) on Desktop; a forced compaction failure on Desktop (red bar, `Cache: failed`, reason kept after expiry).
+- Install: README one-command form in a clean profile; Desktop UI flow with no restart needed.
 
 ### Not yet verified live
 
-1. A real ping turn with a real model reply, and the countdown ticking in a real session (the test machine's CLI login had no API credit; the desktop session wasn't left idle for 55 minutes).
-2. A real compaction triggered by the mod.
-3. The w/c/t/o/r hotkeys by actual keypress (computer use can only click in terminals).
-4. Whether hex colors render in the desktop app. The Windows Command Prompt used for testing drew no color at all (not even Claude Code's own logo), which is why the `●` marker exists.
+1. The full 8-ping budget on the shipped timers (about 7 hours), and Resume after it.
+2. A physical mouse click in Windows Terminal (a simulated click did nothing; Desktop clicks work).
+3. Machine sleep/wake across the deadline.
+4. macOS and Linux.
+5. When compaction fails nothing pings in its place (by design: the failure is shown); a fallback ping is a possible addition.
 
 ### Known small issues (from the Fable 5.2 code review, all low severity)
 
@@ -47,6 +58,12 @@ Done and passing: `claude plugin validate .` (warnings only), `claude plugin tes
 - At an exact minute boundary the status line can lag up to a minute (`refresh` uses `remainingMs % 60_000 || 60_000`).
 - A ping judged stale because a turn failed between claim and start resets `hasFailed` at `turn.start`.
 - The anchor is the time the last request was *sent*, not when its output ended, so the countdown runs slightly early (conservative).
+
+### Host limits found
+
+- The terminal draws a yellow ⚠ before every plugin status line; no option in `$.ui.status`.
+- The Desktop app ignores `ui.render` hooks on `UserMessage` rows for a plugin's prompt, so a ping always looks typed; the transcript note is the label.
+- After a hotkey the terminal's focus ring stays where it was until the bar is focused again; `autoFocus` puts it on the running mode at the next focus.
 
 ## Layout
 
