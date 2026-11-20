@@ -488,7 +488,7 @@ test('a ping is noted in the transcript where the surface shows it as the person
   await w.clock.set(T0 + 55 * MIN + 55 * MIN + 10)
   expect(w.pings().length).toBe(2)
   expect(w.notes).toContain('sending a keep-alive ping automatically (not typed by you) to keep the prompt cache warm')
-  expect(w.notes.some(n => n.includes('Ping read 100% of its 50.1K input tokens from the cache.'))).toBe(true)
+  expect(w.notes.some(n => n.includes('Ping read 100% of its 50.1K input tokens from the cache'))).toBe(true)
 })
 
 test('compact mode compacts 5 minutes before expiry instead of pinging, once, until you write again', async ($, on) => {
@@ -547,7 +547,9 @@ test('a compaction that keeps failing stands in pings only up to the budget', as
     if (w.pings().length === i) await w.pingTurn(`p${i}`)
   }
   expect(w.pings().length).toBe(8)
-  expect(w.status()).toBe('Cache: paused')
+  // Paused at the budget, and by now the cache has run out: the bar says so.
+  expect(w.status()).toBe('Cache: cold')
+  expect(await w.bandText()).toContain('the cache has expired; your next message rewrites it')
 })
 
 test('with fallbackPing off, a failed compaction sends nothing in its place', { options: { fallbackPing: false } }, async ($, on) => {
@@ -572,9 +574,36 @@ test('each ping reports the session totals, and the pause shows them', { options
   await w.clock.advance(55 * MIN)
   await w.pingTurn('p2')
   expect(w.toasts).toContain(
-    'Ping read 100% of its 50.1K input tokens from the cache. This session: 2 pings, 100.0K tokens read from the cache, 200 written.',
+    'Ping read 100% of its 50.1K input tokens from the cache, about 5% of what rewriting the cache would cost. This session: 2 pings, 100.0K tokens read from the cache, 200 written.',
   )
   expect(await w.bandText()).toContain('This session: 2 pings, 100.0K tokens read from the cache, 200 written')
+})
+
+test('the daily cap pauses keep-warm once that many pings went out today, across sessions', { options: { maxPingsPerDay: 1 } }, async ($, on) => {
+  const w = world($, on)
+  await w.start()
+  // T0 is late in a UTC day; start the next morning so both deadlines fall on one day.
+  await w.clock.set(T0 + 3 * 60 * MIN)
+  await w.press('warm')
+  await w.user('hello', 'u1')
+  await w.clock.advance(55 * MIN)
+  await w.pingTurn('p1')
+  expect(w.pings().length).toBe(1)
+  await w.clock.advance(55 * MIN)
+  expect(w.pings().length).toBe(1)
+  expect(w.status()).toBe('Cache: paused')
+  expect(await w.bandText()).toContain('1 pings today across all sessions, your daily cap')
+})
+
+test('the Off bar explains the modes until a mode is first picked, then stays short', async ($, on) => {
+  const w = world($, on)
+  await w.start()
+  expect(await w.bandText()).toContain('Compact summarizes the conversation once')
+  await w.press('warm')
+  await w.press('off')
+  const text = await w.bandText()
+  expect(text).toContain('billed pings, pauses after 8 in a row')
+  expect(text).not.toContain('Compact summarizes')
 })
 
 test('the maxPings setting sets the budget', { options: { maxPings: 2 } }, async ($, on) => {

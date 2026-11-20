@@ -26,7 +26,7 @@ In the Claude desktop app (Code tab): click **+** next to the prompt box, then *
 
 ## Using it
 
-A bar above the prompt shows the cache state and the mode buttons:
+A bar above the prompt shows the cache state and the mode buttons. Until you first pick a mode it also explains the three modes; after that the Off bar is one short line.
 
 `[Keep warm] [Compact] [Warm → compact] [Off]`
 
@@ -40,15 +40,15 @@ In a terminal, press **ctrl+x** then **tab** to focus the bar and use its keys (
 | **Compact** | Compacts the conversation (as `/compact` does) instead of pinging, once, then waits for your next message. | blue |
 | **Warm → compact** | Pings up to 8 times, then compacts instead of pausing. | violet |
 
-The bar turns yellow when paused (⏸), red when the cache is cold, the last turn failed or a ping or compaction did not happen (✕), amber when a compaction failed but a ping kept the cache warm in its place, green just after a compaction (✓), and grey when off. The marks carry the state where colors are hard to tell apart. **Resume** appears when it has paused. Switching modes while it runs keeps the ping count.
+The bar turns yellow when paused (‖; once the cache has run out while paused it says so and the status reads `Cache: cold`), red when the cache is cold, the last turn failed or a ping or compaction did not happen (✕), amber when a compaction failed but a ping kept the cache warm in its place (↻), green just after a compaction (✓), and grey when off. The marks carry the state where colors are hard to tell apart. **Resume** appears when it has paused. Switching modes while it runs keeps the ping count.
 
 The bar is one row when its text and buttons fit, and two (the text over the buttons) when they don't, so no button, Off above all, is ever pushed out of reach. In the terminal, while Off, it also shows the keyboard route (`ctrl+x` then `tab`, then `w` `c` `t` `o`); the Desktop app's buttons show their letters.
 
 The status line shows the time left on the cache, rounded down to whole minutes (`Cache: 42m`), or the state: `off`, `busy`, `waiting`, `paused`, `cold`, `compacted` or `failed`. (The yellow ⚠ the terminal draws in front of it is Claude Code's own mark for every plugin status line; the mod cannot change it.)
 
-Toasts tell you when a ping goes out (`1 of 8`), what it got from the cache and the session's running total (`Ping read 100% of its 50.1K input tokens from the cache. This session: 2 pings, 100.0K tokens read from the cache, 200 written.`), when it pauses, when it compacts (and how many tokens that saved, when the engine reports it), and when something refused a ping or a compaction.
+Toasts tell you when a ping goes out (`1 of 8`), what it got from the cache, what that cost next to rewriting the cache, and the running totals (`Ping read 100% of its 50.1K input tokens from the cache, about 5% of what rewriting the cache would cost. This session: 2 pings, 100.0K tokens read from the cache, 200 written. Today, all sessions: 5 pings.`; the share uses the standard prompt-caching multipliers: cache reads 0.1x input, 1-hour cache writes 2x, output 5x), when it pauses, when it compacts (and how many tokens that saved, when the engine reports it), and when something refused a ping or a compaction.
 
-**When something goes wrong** the bar turns red and says why (for example `compaction failed after 3 tries: …`), the status line reads `Cache: failed`, and a `keep-cache-warm: …` line is written into the transcript. It clears when you send a message, pick a mode, or a later compaction succeeds.
+**When something goes wrong** the bar says why (for example `✕ Failed: compaction failed after 3 tries: …`), the status line reads `Cache: failed`, and a `keep-cache-warm: …` line is written into the transcript. If a ping then kept the cache warm in the failed compaction's place, the bar turns amber (`↻ Kept warm by a ping instead; …`) and the countdown stays. It clears when you send a message, pick a mode, or a later compaction succeeds.
 
 ### In the Claude Desktop app
 
@@ -56,15 +56,16 @@ The Code tab is a headless session, where the engine refuses a plugin's compact 
 
 ## Settings
 
-Three settings, under `/config` (search "keep") or in the Desktop app's plugin settings:
+Four settings, under `/config` (search "keep") or in the Desktop app's plugin settings:
 
 | Setting | Default | What it does |
 |---|---|---|
 | **Start each session in** | `off` | The mode a new session starts in: `off`, `warm`, `compact` or `warm-then-compact`. Picking a mode or Off in the bar wins for that session. |
 | **Pings before it stops** | `8` | Pings in a row with no message from you before Keep warm pauses and Warm → compact compacts instead (1 to 50). |
+| **Daily ping cap, all sessions** | `0` (none) | Most pings per day (UTC) across every session on this machine; past it, keep-warm pauses until you press Resume or the next day. |
 | **Ping when a compaction fails** | on | If a compaction fails, one keep-alive ping goes out in its place (counted against the budget) so the cache is still warm when you come back. |
 
-They are stored in `settings.json` under `pluginConfigs["keep-cache-warm@claude-keep-cache-warm"].options` (`defaultMode`, `maxPings`, `fallbackPing`); a change reloads the mod at once.
+They are stored in `settings.json` under `pluginConfigs["keep-cache-warm@claude-keep-cache-warm"].options` (`defaultMode`, `maxPings`, `maxPingsPerDay`, `fallbackPing`); a change reloads the mod at once.
 
 ## When it does nothing
 

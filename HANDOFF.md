@@ -17,7 +17,7 @@ Requirements it was built against (from the original ask):
 
 ## Current state (2026-11-20)
 
-Done and passing: `claude plugin validate .` (warnings only), `claude plugin test .` (46 of 46). Version 0.3.1 (session ping totals in toasts and the paused bar, a `fallbackPing` setting, a mode explainer while Off, (state marks ⏸ ✕ ✓, a rescued-by-ping state with the countdown kept, the key route first in the Off bar). Version 0.3.0 adds settings (`defaultMode`, `maxPings`), focus that follows the hotkey, and a fallback ping when a compaction fails.
+Done and passing: `claude plugin validate .` (warnings only), `claude plugin test .` (48 of 48). Version 0.4.0 adds a daily ping cap across sessions (`maxPingsPerDay`, kept in `$.store` as `pingDay`), a one-time mode explainer (`hasPicked` in `$.store`), the relative cost of a ping, and `Cache: cold` once the cache runs out while paused. Version 0.3.1 (session ping totals in toasts and the paused bar, a `fallbackPing` setting, a mode explainer while Off, (state marks ⏸ ✕ ✓, a rescued-by-ping state with the countdown kept, the key route first in the Off bar). Version 0.3.0 adds settings (`defaultMode`, `maxPings`), focus that follows the hotkey, and a fallback ping when a compaction fails.
 
 | Area | State |
 |---|---|
@@ -44,12 +44,14 @@ Ping and compaction runs used a short-timer variant (`TTL_MS` 6 min, `MAX_PINGS`
 - Pause and Resume (click) on Desktop; a forced compaction failure on Desktop (red bar, `Cache: failed`, reason kept after expiry).
 - Install: README one-command form in a clean profile; Desktop UI flow with no restart needed.
 
+- The full budget on the shipped timers (0.3.0, 2026-11-20, 8.5 hours): 8 pings 55 minutes apart in the CLI (then the pause, no 9th) and in Desktop Warm -> compact (then a compaction at the 9th deadline); every ping read ~99.9% from the cache, wrote ~35 tokens, 4 output.
+- A draft in the composer survives pings (CLI); `defaultMode` starts a new session in its mode.
+- Clicks in Windows Terminal work with the fullscreen renderer (`/tui fullscreen`), not the classic one (it takes no mouse).
+
 ### Not yet verified live
 
-1. The full 8-ping budget on the shipped timers (about 7 hours), and Resume after it.
-2. Clicks in Windows Terminal: they work with the fullscreen renderer (`/tui fullscreen`, verified), not with the classic one (it takes no mouse).
-3. Machine sleep/wake across the deadline.
-4. macOS and Linux.
+1. Machine sleep/wake across the deadline (a wall-clock jump past expiry was simulated; see below).
+2. macOS and Linux.
 
 ### Known small issues (from the Fable 5.2 code review, all low severity)
 

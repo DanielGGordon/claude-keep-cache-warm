@@ -1,5 +1,5 @@
 /** Why keep-warm paused itself: the 8-ping limit, or a ping that found the cache already cold. */
-export type PauseReason = 'limit' | 'not-caching'
+export type PauseReason = 'limit' | 'not-caching' | 'daily'
 
 /**
  * What it does before the cache expires (t3code's modes): ping to keep it warm,
