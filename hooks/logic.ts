@@ -23,6 +23,8 @@ export const HOLD_RECHECK_MS = 60_000
 export const FRESH_FIRE_MS = 2 * 60_000
 /** After an accepted submit, count the ping here if turn.start did not. */
 export const COUNT_FALLBACK_MS = 60_000
+/** A /compact command that has not reported a compaction by this long is a failure. */
+export const COMPACT_CHECK_MS = 3 * 60_000
 /** A re-check later than this past an armed deadline re-arms the ping timer. */
 export const ARM_SLACK_MS = 5_000
 
@@ -57,6 +59,7 @@ export const INITIAL: KeepWarm = {
   lastUserAt: null,
   isHeldByBackground: false,
   hasHeartbeat: false,
+  lastProblem: null,
 }
 
 export type CacheState = {
@@ -88,8 +91,8 @@ export const MODE_LABEL: Record<Mode, string> = {
 }
 const MODE_TITLE: Record<Mode, string> = {
   warm: 'Keeping cache warm',
-  compact: 'Compacting before the cache expires',
-  'warm-then-compact': `Keeping cache warm, then compacting after ${MAX_PINGS} pings`,
+  compact: 'Compacting before expiry',
+  'warm-then-compact': `Warm → compact after ${MAX_PINGS} pings`,
 }
 /**
  * Explicit colors (theme keys are not drawn everywhere): t3code's warm orange,
@@ -104,6 +107,7 @@ export const STATE_COLOR = {
   off: '#9ca3af',
   paused: '#d97706',
   cold: '#dc2626',
+  problem: '#dc2626',
   compacted: '#16a34a',
 } as const
 
@@ -136,6 +140,7 @@ export function cacheState(s: KeepWarm, now: number, isWaiting = false): CacheSt
   if (s.hasFailed) return at('cold')
   if (s.compactedAt !== null && s.lastOutputAt === null) return at('compacted')
   if (remainingMs === null || pingAt === null) return at('cold')
+  if (s.lastProblem !== null) return at('problem')
   if (s.isHeldByBackground) return at('busy')
   if (now >= pingAt) return at('due')
   return at('scheduled')
@@ -200,6 +205,8 @@ export function statusText(st: CacheState): string {
     case 'scheduled':
     case 'due':
       return `Cache: ${formatRemaining(st.remainingMs ?? 0)}`
+    case 'problem':
+      return 'Cache: failed'
     default:
       return `Cache: ${st.kind}`
   }
@@ -210,7 +217,7 @@ export function toView(s: KeepWarm, now: number, isWaiting = false): View {
   const left = st.remainingMs === null ? '' : ` · cache ${formatRemaining(st.remainingMs)} left`
   const sent =
     s.consecutivePings > 0
-      ? ` · ${s.consecutivePings} of ${MAX_PINGS} pings since your last message`
+      ? ` · ${s.consecutivePings} of ${MAX_PINGS} pings sent`
       : ''
   const heartbeat = s.hasHeartbeat ? ' · also kept warm by the subagent heartbeat' : ''
   const title = MODE_TITLE[s.mode]
@@ -219,7 +226,7 @@ export function toView(s: KeepWarm, now: number, isWaiting = false): View {
   let color: string = MODE_COLOR[s.mode]
   switch (st.kind) {
     case 'off':
-      band = `Keep cache warm: off${left}`
+      band = `Keep cache warm: off${left} · pings and compactions are billed model calls; ${MAX_PINGS} pings at most`
       color = STATE_COLOR.off
       break
     case 'paused':
@@ -246,7 +253,11 @@ export function toView(s: KeepWarm, now: number, isWaiting = false): View {
     }
     case 'compacted':
       color = STATE_COLOR.compacted
-      band = `${title} · compacted before the cache expired; your next message starts a fresh cache`
+      band = `Compacted before the cache expired; your next message starts a fresh cache`
+      break
+    case 'problem':
+      color = STATE_COLOR.problem
+      band = `Failed: ${s.lastProblem}${left}`
       break
     case 'cold':
       color = STATE_COLOR.cold
@@ -254,13 +265,15 @@ export function toView(s: KeepWarm, now: number, isWaiting = false): View {
         ? `${title} · last turn failed, so nothing is sent until a turn succeeds${left}`
         : s.lastOutputAt === null
           ? `${title} · no cached conversation yet; your next message warms it`
-          : `${title} · cache expired; your next message warms it`
+          : s.lastProblem !== null
+            ? `Cache expired after a failure: ${s.lastProblem}`
+            : `${title} · cache expired; your next message warms it`
       break
     case 'due':
-      band = `${title}${left} · ${action} due now${sent}`
+      band = `${title} · ${action} due now${left}${sent}`
       break
     case 'scheduled':
-      band = `${title}${left} · ${action} in ${formatRemaining((st.pingAt ?? now) - now)}${sent}`
+      band = `${title} · ${action} in ${formatRemaining((st.pingAt ?? now) - now)}${left}${sent}`
       break
   }
   return {
@@ -275,11 +288,40 @@ export function toView(s: KeepWarm, now: number, isWaiting = false): View {
 export function pingToast(n: number, mode: Mode = 'warm'): string {
   if (n < MAX_PINGS) return `Keep-alive ping sent to keep the prompt cache warm (${n} of ${MAX_PINGS}).`
   return mode === 'warm-then-compact'
-    ? `Keep-alive ping ${MAX_PINGS} of ${MAX_PINGS} sent with no message from you. Next time, the conversation is compacted before the cache expires instead of pinged.`
+    ? `Ping ${MAX_PINGS} of ${MAX_PINGS} sent. Next time the conversation is compacted instead.`
     : `Keep cache warm paused: ${MAX_PINGS} pings in a row with no message from you (the ${MAX_PINGS}th just went out). The cache stays warm for about another hour; send a message or press Resume to continue.`
 }
 
 export function notCachingToast(usage: ModelUsage): string {
   const total = usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens
   return `Keep cache warm paused: the ping found the cache already cold (${usage.cache_read_input_tokens} of ${total} input tokens read from cache), so the cache is not lasting an hour here. Press Resume to try again.`
+}
+
+/** 62800 -> "62.8K", 1200000 -> "1.2M". */
+export function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
+  return String(n)
+}
+
+/** What a ping's first request got from the cache: the saving, in the person's terms. */
+export function pingUsageText(usage: ModelUsage): string {
+  const total = usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens
+  const pct = total === 0 ? 0 : Math.round((usage.cache_read_input_tokens / total) * 100)
+  return `Ping read ${pct}% of its ${fmtTokens(total)} input tokens from the cache.`
+}
+
+export function compactedText(tokensBefore?: number, tokensAfter?: number): string {
+  const base = 'Compacted the conversation before the prompt cache expired'
+  return tokensBefore !== undefined && tokensAfter !== undefined
+    ? `${base} (${fmtTokens(tokensBefore)} → ${fmtTokens(tokensAfter)} tokens).`
+    : `${base}.`
+}
+
+/** An engine error as a short reason: no "$.x.y:" or plugin prefixes, no advice for plugin authors. */
+export function cleanError(err: unknown): string {
+  const text = err instanceof Error ? err.message : String(err)
+  const bare = text.replace(/^(?:keep-cache-warm:\s*|\$\.[\w.]+:\s*|prompt\.submit:\s*)+/i, '')
+  const reason = bare.split(/;\s*(?:catch it|run one with)/i)[0] ?? bare
+  return reason.length > 160 ? `${reason.slice(0, 157)}...` : reason
 }

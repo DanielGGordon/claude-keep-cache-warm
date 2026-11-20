@@ -22,7 +22,7 @@ From a shell:
 claude plugin install keep-cache-warm --marketplace DanielGGordon/claude-keep-cache-warm
 ```
 
-In the Claude desktop app: click **+** next to the prompt box, then **Plugins**, **Add marketplace** with `DanielGGordon/claude-keep-cache-warm`, then **Add plugin**.
+In the Claude desktop app (Code tab): click **+** next to the prompt box, then **Add plugins**, the **+** at the top right of the directory, **Add from a repository**, pick `DanielGGordon/claude-keep-cache-warm`, **Sync**, then the **+** on *Keep cache warm*. It is ready at once: the bar appears in the next new session, with no restart.
 
 ## Using it
 
@@ -32,7 +32,7 @@ A bar above the prompt shows the cache state and the mode buttons:
 
 It starts off in every session; pick a mode to turn it on for the current session. The running mode's button is highlighted and marked ●.
 
-In a terminal, click a button, or press **ctrl+x** then **tab** to focus the bar and use its keys: **w** Keep warm, **c** Compact, **t** Warm → compact, **o** Off, **r** Resume. **Esc** returns to the prompt.
+In a terminal, press **ctrl+x** then **tab** to focus the bar and use its keys (each button shows its letter; a click also works where the terminal reports the mouse, which depends on the terminal): **w** Keep warm, **c** Compact, **t** Warm → compact, **o** Off, **r** Resume. **Esc** returns to the prompt.
 
 | Mode | What happens about 5 minutes before the cache expires | Bar color |
 |---|---|---|
@@ -40,11 +40,19 @@ In a terminal, click a button, or press **ctrl+x** then **tab** to focus the bar
 | **Compact** | Compacts the conversation (as `/compact` does) instead of pinging, once, then waits for your next message. | blue |
 | **Warm → compact** | Pings up to 8 times, then compacts instead of pausing. | violet |
 
-The bar turns yellow when paused, red when the cache is cold or the last turn failed, green just after a compaction, and grey when off. **Resume** appears when it has paused. Switching modes while it runs keeps the ping count.
+The bar turns yellow when paused, red when the cache is cold, the last turn failed or a ping or compaction did not happen, green just after a compaction, and grey when off. **Resume** appears when it has paused. Switching modes while it runs keeps the ping count.
 
-The status line shows the time left on the cache, rounded down to whole minutes (`Cache: 42m`), or the state: `off`, `busy`, `waiting`, `paused`, `cold` or `compacted`.
+The bar is one row when its text and buttons fit, and two (the text over the buttons) when they don't, so no button, Off above all, is ever pushed out of reach. In the terminal, while Off, it also shows the keyboard route (`ctrl+x` then `tab`, then `w` `c` `t` `o`); the Desktop app's buttons show their letters.
 
-Toasts tell you when a ping goes out (`1 of 8`), when it pauses, when it compacts, and when something refused a ping or a compaction.
+The status line shows the time left on the cache, rounded down to whole minutes (`Cache: 42m`), or the state: `off`, `busy`, `waiting`, `paused`, `cold`, `compacted` or `failed`. (The yellow ⚠ the terminal draws in front of it is Claude Code's own mark for every plugin status line; the mod cannot change it.)
+
+Toasts tell you when a ping goes out (`1 of 8`), what it got from the cache (`Ping read 100% of its 50.1K input tokens from the cache.`), when it pauses, when it compacts (and how many tokens that saved, when the engine reports it), and when something refused a ping or a compaction.
+
+**When something goes wrong** the bar turns red and says why (for example `compaction failed after 3 tries: …`), the status line reads `Cache: failed`, and a `keep-cache-warm: …` line is written into the transcript. It clears when you send a message, pick a mode, or a later compaction succeeds.
+
+### In the Claude Desktop app
+
+The Code tab is a headless session, where the engine refuses a plugin's compact call. The mod notices and runs the `/compact` command instead (you will see a `/compact` message in the transcript, after a `keep-cache-warm:` line saying why). The Desktop app also draws a ping as if you had typed it, so the mod writes a `keep-cache-warm: sending a keep-alive ping …` line just before each one; the terminal labels the row itself.
 
 ## When it does nothing
 
@@ -59,6 +67,8 @@ Only messages you type count as messages from you. Task notifications, scheduled
 If a ping finds the cache already cold (it read less than half its input from the cache), the mod pauses rather than paying for cache writes every hour, and says so.
 
 ## Cost
+
+A ping on a 44.6K-token conversation, 55 minutes after the previous request, read 44,585 tokens from the cache, wrote 50 and produced 4 output tokens (measured on a real run). One caveat: a conversation that has made only a single request may already have lost the cache of its own part after the engine's short window, so its first ping re-writes that part (about 12.8K tokens in the same test) and every ping after it reads the whole thing. If a ping reads under half its input from the cache, the mod pauses and says so.
 
 Each ping is a real, billed turn: a cache read of the conversation plus a one-word reply. Each compaction is a model call too. Both are usually much cheaper than rewriting a large cache from scratch.
 

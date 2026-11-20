@@ -6,11 +6,15 @@ import {
   MAX_ATTEMPTS,
   TTL_MS,
   cacheState,
+  cleanError,
+  compactedText,
+  fmtTokens,
   formatRemaining,
   isCacheCold,
   isStalePing,
   isUserOrigin,
   nextPingAt,
+  pingUsageText,
   statusText,
   toView,
 } from '../hooks/logic'
@@ -132,5 +136,40 @@ describe('isUserOrigin', () => {
     expect(isUserOrigin({ kind: 'auto-continuation' }, false)).toBe(false)
     expect(isUserOrigin({ kind: 'unclassified' }, false)).toBe(false)
     expect(isUserOrigin({ kind: 'composer' }, true)).toBe(false)
+  })
+})
+
+describe('texts', () => {
+  test('token counts are short', () => {
+    expect(fmtTokens(950)).toBe('950')
+    expect(fmtTokens(62_800)).toBe('62.8K')
+    expect(fmtTokens(1_250_000)).toBe('1.3M')
+  })
+
+  test('a ping says how much of the cache it read', () => {
+    const usage = { model: 'm', input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 49_990, cache_creation_input_tokens: 0 }
+    expect(pingUsageText(usage)).toBe('Ping read 100% of its 50.0K input tokens from the cache.')
+    expect(pingUsageText({ ...usage, cache_read_input_tokens: 0, cache_creation_input_tokens: 50_000 })).toBe(
+      'Ping read 0% of its 50.0K input tokens from the cache.',
+    )
+  })
+
+  test('a compaction says what it saved, when the engine reports it', () => {
+    expect(compactedText()).toBe('Compacted the conversation before the prompt cache expired.')
+    expect(compactedText(62_800, 4_100)).toBe(
+      'Compacted the conversation before the prompt cache expired (62.8K → 4.1K tokens).',
+    )
+  })
+
+  test('an engine error becomes a short reason', () => {
+    expect(
+      cleanError(
+        new Error(
+          'keep-cache-warm: $.session.compact: not available in a headless (-p / SDK) session yet; catch it and carry on',
+        ),
+      ),
+    ).toBe('not available in a headless (-p / SDK) session yet')
+    expect(cleanError('plain failure')).toBe('plain failure')
+    expect(cleanError(new Error('x'.repeat(300))).length).toBe(160)
   })
 })
