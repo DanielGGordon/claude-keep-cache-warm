@@ -219,7 +219,7 @@ export const register: Register = (on, options) => {
     // The daily cap across sessions: a ping (not a compaction) over it pauses instead.
     if (dailyCap > 0 && nextAction(s) === 'ping' && (await todayCount(o, now)) >= dailyCap) {
       await o.set(v => (v.pausedAt === null ? { ...v, pausedAt: now, pauseReason: 'daily' } : v))
-      o.toast(`Keep cache warm paused: ${dailyCap} pings today across all sessions, your daily cap.`)
+      o.toast(`Keep cache warm paused: ${dailyCap} ping${dailyCap === 1 ? '' : 's'} today across all sessions, your daily cap.`)
       await syncNow(o)
       return
     }

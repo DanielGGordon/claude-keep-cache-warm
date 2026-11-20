@@ -268,7 +268,7 @@ export function toView(
         s.pauseReason === 'not-caching'
           ? `‖ Paused: the last ping found the cache already cold, so it is not lasting an hour here${expired}`
           : s.pauseReason === 'daily'
-            ? `‖ Paused: ${opts.dailyCap ?? ''} pings today across all sessions, your daily cap; press Resume to go on${expired}`
+            ? `‖ Paused: ${opts.dailyCap ?? ''} ping${opts.dailyCap === 1 ? '' : 's'} today across all sessions, your daily cap; press Resume to go on${expired}`
             : `‖ Paused after ${maxPings} pings with no message from you; send a message or press Resume${expired} · ${totalsText(s.pingTotals)}`
       break
     }

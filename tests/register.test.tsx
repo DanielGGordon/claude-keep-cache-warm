@@ -592,7 +592,7 @@ test('the daily cap pauses keep-warm once that many pings went out today, across
   await w.clock.advance(55 * MIN)
   expect(w.pings().length).toBe(1)
   expect(w.status()).toBe('Cache: paused')
-  expect(await w.bandText()).toContain('1 pings today across all sessions, your daily cap')
+  expect(await w.bandText()).toContain('1 ping today across all sessions, your daily cap')
 })
 
 test('the Off bar explains the modes until a mode is first picked, then stays short', async ($, on) => {
