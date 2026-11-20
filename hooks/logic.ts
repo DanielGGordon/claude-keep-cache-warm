@@ -119,7 +119,7 @@ export const MODE_COLOR: Record<Mode, string> = {
   'warm-then-compact': '#8b5cf6',
 }
 export const STATE_COLOR = {
-  off: '#9ca3af',
+  off: '#6b7280',
   paused: '#d97706',
   cold: '#dc2626',
   problem: '#dc2626',
@@ -233,7 +233,12 @@ function isRescued(s: KeepWarm): boolean {
   return s.lastProblem?.endsWith(FALLBACK_SUFFIX) === true
 }
 
-export function toView(s: KeepWarm, now: number, isWaiting = false): View {
+export function toView(
+  s: KeepWarm,
+  now: number,
+  isWaiting = false,
+  opts: { firstUse?: boolean; dailyCap?: number } = {},
+): View {
   const st = cacheState(s, now, isWaiting)
   const left = st.remainingMs === null ? '' : ` · cache ${formatRemaining(st.remainingMs)} left`
   const sent =
@@ -247,16 +252,26 @@ export function toView(s: KeepWarm, now: number, isWaiting = false): View {
   let color: string = MODE_COLOR[s.mode]
   switch (st.kind) {
     case 'off':
-      band = `Keep cache warm: off${left} · Keep warm pings before the cache expires; Compact summarizes the conversation once; Warm → compact pings, then summarizes · pings and compactions are billed; ${maxPings} pings at most`
+      band = opts.firstUse
+        ? `Keep cache warm: off${left} · Keep warm pings before the cache expires; Compact summarizes the conversation once; Warm → compact pings, then summarizes · pings and compactions are billed; it pauses after ${maxPings} pings in a row`
+        : `Keep cache warm: off${left} · billed pings, pauses after ${maxPings} in a row`
       color = STATE_COLOR.off
       break
-    case 'paused':
+    case 'paused': {
       color = STATE_COLOR.paused
+      // Paused long enough for the cache to run out: say so, the next message pays for a rewrite.
+      const expired =
+        st.remainingMs === null && s.lastOutputAt !== null
+          ? ' · the cache has expired; your next message rewrites it'
+          : left
       band =
         s.pauseReason === 'not-caching'
-          ? `⏸ Paused: the last ping found the cache already cold, so it is not lasting an hour here${left}`
-          : `⏸ Paused after ${maxPings} pings with no message from you; send a message or press Resume${left} · ${totalsText(s.pingTotals)}`
+          ? `‖ Paused: the last ping found the cache already cold, so it is not lasting an hour here${expired}`
+          : s.pauseReason === 'daily'
+            ? `‖ Paused: ${opts.dailyCap ?? ''} ping${opts.dailyCap === 1 ? '' : 's'} today across all sessions, your daily cap; press Resume to go on${expired}`
+            : `‖ Paused after ${maxPings} pings with no message from you; send a message or press Resume${expired} · ${totalsText(s.pingTotals)}`
       break
+    }
     case 'waiting':
       band = `${title} · waiting on you${left}`
       break
@@ -280,7 +295,7 @@ export function toView(s: KeepWarm, now: number, isWaiting = false): View {
       if (isRescued(s)) {
         // A ping kept the cache warm in the failed action's place: amber, and the countdown stands.
         color = STATE_COLOR.paused
-        band = `Kept warm by a ping instead; ${(s.lastProblem ?? '').slice(0, -FALLBACK_SUFFIX.length)}${left}`
+        band = `↻ Kept warm by a ping instead; ${(s.lastProblem ?? '').slice(0, -FALLBACK_SUFFIX.length)}${left}`
       } else {
         color = STATE_COLOR.problem
         band = `✕ Failed: ${s.lastProblem}${left}`
@@ -310,7 +325,9 @@ export function toView(s: KeepWarm, now: number, isWaiting = false): View {
     status:
       st.kind === 'problem' && isRescued(s) && st.remainingMs !== null
         ? `Cache: ${formatRemaining(st.remainingMs)}`
-        : statusText(st),
+        : st.kind === 'paused' && st.remainingMs === null && s.lastOutputAt !== null
+          ? 'Cache: cold'
+          : statusText(st),
     band: band + heartbeat,
   }
 }
@@ -335,11 +352,30 @@ export function fmtTokens(n: number): string {
 }
 
 /** What a ping's first request got from the cache: the saving, in the person's terms. */
-export function pingUsageText(usage: ModelUsage, totals?: KeepWarm['pingTotals']): string {
+export function pingUsageText(
+  usage: ModelUsage,
+  totals?: KeepWarm['pingTotals'],
+  todayCount?: number,
+): string {
   const total = usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens
   const pct = total === 0 ? 0 : Math.round((usage.cache_read_input_tokens / total) * 100)
-  const one = `Ping read ${pct}% of its ${fmtTokens(total)} input tokens from the cache.`
-  return totals && totals.count > 1 ? `${one} ${totalsText(totals)}.` : one
+  const rel = relativeCost(usage)
+  const one = `Ping read ${pct}% of its ${fmtTokens(total)} input tokens from the cache${rel === null ? '' : `, about ${rel}% of what rewriting the cache would cost`}.`
+  const session = totals && totals.count > 1 ? ` ${totalsText(totals)}.` : ''
+  const today = todayCount !== undefined && todayCount > (totals?.count ?? 0) ? ` Today, all sessions: ${todayCount} pings.` : ''
+  return `${one}${session}${today}`
+}
+
+/**
+ * A ping's price as a share of rewriting its whole prompt into the 1-hour cache, at the
+ * standard prompt-caching multipliers (cache read 0.1x input, 1-hour cache write 2x, output 5x).
+ */
+export function relativeCost(usage: ModelUsage): number | null {
+  const total = usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens
+  if (total === 0) return null
+  const ping =
+    usage.input_tokens + 0.1 * usage.cache_read_input_tokens + 2 * usage.cache_creation_input_tokens + 5 * usage.output_tokens
+  return Math.max(1, Math.round((ping / (2 * total)) * 100))
 }
 
 /** "This session: 3 pings, 216.0K tokens read from the cache, 1.2K written". */

@@ -148,9 +148,11 @@ describe('texts', () => {
 
   test('a ping says how much of the cache it read', () => {
     const usage = { model: 'm', input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 49_990, cache_creation_input_tokens: 0 }
-    expect(pingUsageText(usage)).toBe('Ping read 100% of its 50.0K input tokens from the cache.')
+    expect(pingUsageText(usage)).toBe(
+      'Ping read 100% of its 50.0K input tokens from the cache, about 5% of what rewriting the cache would cost.',
+    )
     expect(pingUsageText({ ...usage, cache_read_input_tokens: 0, cache_creation_input_tokens: 50_000 })).toBe(
-      'Ping read 0% of its 50.0K input tokens from the cache.',
+      'Ping read 0% of its 50.0K input tokens from the cache, about 100% of what rewriting the cache would cost.',
     )
   })
 

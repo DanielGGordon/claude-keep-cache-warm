@@ -49,7 +49,7 @@ import {
 
 // One atom for all the logic state, so each change is one atomic update.
 // Change the tag when KeepWarm's fields change: it declines older values.
-const S = atom({ plugin: 'keep-cache-warm', key: 's' } as const, INITIAL, { shape: 'kw-6' })
+const S = atom({ plugin: 'keep-cache-warm', key: 's' } as const, INITIAL, { shape: 'kw-7' })
 // The derived display; the band reads only this, so it redraws only when the text changes.
 const V = atom({ plugin: 'keep-cache-warm', key: 'view' } as const, null, { shape: 'view-4' })
 
@@ -75,6 +75,8 @@ type Ops = {
   toast: (text: string) => void
   log: (text: string) => void
   focus: (requestId: string, key: string) => void
+  storeGet: (key: string) => Promise<unknown>
+  storeSet: (key: string, value: unknown) => void
   note: (text: string) => void
   after: (ms: number, fn: () => void) => Timer
   agents: () => Promise<AgentInfo[]>
@@ -87,6 +89,11 @@ export const register: Register = (on, options) => {
   // Settings (the plugin's userConfig): the ping budget, and the mode a new session starts in.
   setMaxPings(options.maxPings)
   const defaultMode: Mode | null = MODES.find(m => m === options.defaultMode) ?? null
+  const dailyCap =
+    typeof options.maxPingsPerDay === 'number' && options.maxPingsPerDay > 0 ? Math.round(options.maxPingsPerDay) : 0
+  /** No mode was ever picked on this machine: the Off bar explains the modes (kept in $.store). */
+  let isFirstUse = true
+  const memStore = new Map<string, unknown>()
   let ops: Ops | null = null
   let pingTimer: Timer | null = null
   let pingDeadline: number | null = null
@@ -139,7 +146,7 @@ export const register: Register = (on, options) => {
   }
 
   async function refresh(o: Ops, s: KeepWarm, now: number): Promise<void> {
-    const view = toView(s, now, isWaiting())
+    const view = toView(s, now, isWaiting(), { firstUse: isFirstUse, dailyCap })
     // While off there is nothing to say: no status line item (the terminal marks every one with a ⚠).
     const status = view.kind === 'off' ? undefined : view.status
     if (status !== lastStatus) {
@@ -209,6 +216,13 @@ export const register: Register = (on, options) => {
       await syncNow(o)
       return
     }
+    // The daily cap across sessions: a ping (not a compaction) over it pauses instead.
+    if (dailyCap > 0 && nextAction(s) === 'ping' && (await todayCount(o, now)) >= dailyCap) {
+      await o.set(v => (v.pausedAt === null ? { ...v, pausedAt: now, pauseReason: 'daily' } : v))
+      o.toast(`Keep cache warm paused: ${dailyCap} ping${dailyCap === 1 ? '' : 's'} today across all sessions, your daily cap.`)
+      await syncNow(o)
+      return
+    }
     // Claim atomically: decide due-and-unclaimed and mark it in one update.
     let isClaimed = false
     let action = 'ping' as 'ping' | 'compact'
@@ -242,6 +256,18 @@ export const register: Register = (on, options) => {
     sendPing(o, claimAt)
   }
 
+  /** UTC day, the key the cross-session ping count is kept under. */
+  const dayOf = (ms: number) => new Date(ms).toISOString().slice(0, 10)
+  async function todayCount(o: Ops, now: number): Promise<number> {
+    const rec = (await o.storeGet('pingDay').catch(() => undefined)) as { day?: string; count?: number } | undefined
+    return rec?.day === dayOf(now) ? (rec.count ?? 0) : 0
+  }
+  async function countToday(o: Ops, now: number): Promise<number> {
+    const n = (await todayCount(o, now)) + 1
+    o.storeSet('pingDay', { day: dayOf(now), count: n })
+    return n
+  }
+
   function sendPing(o: Ops, claimAt: number): void {
     // Never awaited: it resolves only as the ping's own turn starts.
     void o.submit(PING_TEXT).then(
@@ -262,6 +288,7 @@ export const register: Register = (on, options) => {
    */
   async function fallbackPing(o: Ops): Promise<void> {
     const now = await o.now()
+    if (dailyCap > 0 && (await todayCount(o, now)) >= dailyCap) return
     let claimAt: number | null = null
     await o.set(v => {
       claimAt = null
@@ -449,6 +476,10 @@ export const register: Register = (on, options) => {
         : { ...fresh(v), isEnabled: true, mode, isTouched: true },
     )
     await sync()
+    if (isFirstUse) {
+      isFirstUse = false
+      o.storeSet('hasPicked', true)
+    }
     // A hotkey leaves the ring where it was: move it to the mode now running.
     if (bandRequestId !== null) o.focus(bandRequestId, mode)
     if (cacheState(s, await o.now(), isWaiting()).kind === 'cold') {
@@ -479,6 +510,12 @@ export const register: Register = (on, options) => {
       status: text => $.ui.status(text),
       toast: text => $.ui.toast(text),
       log: text => $.ui.log(text, { to: 'debug' }),
+      // $.store is the cross-session record; a copy in memory covers a host without one (tests).
+      storeGet: async key => (await $.store.get(key).catch(() => undefined)) ?? memStore.get(key),
+      storeSet: (key, value) => {
+        memStore.set(key, value)
+        void $.store.set(key, value).catch(() => undefined)
+      },
       focus: (requestId, key) => {
         // Denied when the bar does not hold the keys (a click on Desktop): nothing to move then.
         void $.ui.focus({ requestId, key }).catch(() => undefined)
@@ -492,6 +529,7 @@ export const register: Register = (on, options) => {
     }
     const now = await $.clock.now()
     const s = await read($, S)
+    isFirstUse = (await ops?.storeGet('hasPicked')) !== true
     // A turn whose end this copy never heard (lost worker) does not block forever.
     if (s.busyTurnId !== null && (s.busySince === null || now - s.busySince > 2 * TTL_MS)) {
       await update($, S, v => ({ ...v, busyTurnId: null, busySince: null }))
@@ -697,7 +735,8 @@ export const register: Register = (on, options) => {
       if (isCold) $.ui.toast(notCachingToast(usage))
       else if (isPingTurn && e.index === 0) {
         // What the ping bought: how much of the conversation the cache served.
-        const text = pingUsageText(usage, s2.pingTotals)
+        const today = ops ? await countToday(ops, sentAt) : undefined
+        const text = pingUsageText(usage, s2.pingTotals, today)
         $.ui.toast(text)
         if (isRemoteSurface) $.ui.log(noteText(text), { to: 'transcript' })
       }
