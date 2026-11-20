@@ -17,7 +17,7 @@ Requirements it was built against (from the original ask):
 
 ## Current state (2026-11-20)
 
-Done and passing: `claude plugin validate .` (warnings only), `claude plugin test .` (44 of 44). Version 0.3.0 adds settings (`defaultMode`, `maxPings`), focus that follows the hotkey, and a fallback ping when a compaction fails.
+Done and passing: `claude plugin validate .` (warnings only), `claude plugin test .` (46 of 46). Version 0.3.1 (session ping totals in toasts and the paused bar, a `fallbackPing` setting, a mode explainer while Off, (state marks ⏸ ✕ ✓, a rescued-by-ping state with the countdown kept, the key route first in the Off bar). Version 0.3.0 adds settings (`defaultMode`, `maxPings`), focus that follows the hotkey, and a fallback ping when a compaction fails.
 
 | Area | State |
 |---|---|
@@ -62,7 +62,10 @@ Ping and compaction runs used a short-timer variant (`TTL_MS` 6 min, `MAX_PINGS`
 
 - The terminal draws a yellow ⚠ before every plugin status line; no option in `$.ui.status`.
 - The Desktop app ignores `ui.render` hooks on `UserMessage` rows for a plugin's prompt, so a ping always looks typed; the transcript note is the label.
-- After a hotkey the terminal's focus ring stays where it was until the bar is focused again; `autoFocus` puts it on the running mode at the next focus.
+- Changing a setting writes Claude Code's own "options changed - reloaded (N hooks: ...)" line into the transcript.
+- On Desktop the host draws its "Compacted session" row before the `/compact` command's own bubble.
+- The terminal's classic renderer takes no mouse input; the fullscreen one (`/tui fullscreen`) does.
+- (Solved: the focus ring now follows a hotkey through `$.ui.focus`.)
 
 ## Layout
 

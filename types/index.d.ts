@@ -50,6 +50,8 @@ export type KeepWarm = {
   isFallbackPing: boolean
   /** The person picked a mode or Off in this session; until then the `defaultMode` setting applies. */
   isTouched: boolean
+  /** This session's pings so far: how many, and the input tokens read from and written to the cache. */
+  pingTotals: { count: number; read: number; written: number }
 }
 
 export type Kind =

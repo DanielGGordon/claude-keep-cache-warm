@@ -74,6 +74,7 @@ export const INITIAL: KeepWarm = {
   lastProblem: null,
   isFallbackPing: false,
   isTouched: false,
+  pingTotals: { count: 0, read: 0, written: 0 },
 }
 
 export type CacheState = {
@@ -227,6 +228,11 @@ export function statusText(st: CacheState): string {
   }
 }
 
+/** A failed compaction whose place a keep-alive ping took: the cache is warm. */
+function isRescued(s: KeepWarm): boolean {
+  return s.lastProblem?.endsWith(FALLBACK_SUFFIX) === true
+}
+
 export function toView(s: KeepWarm, now: number, isWaiting = false): View {
   const st = cacheState(s, now, isWaiting)
   const left = st.remainingMs === null ? '' : ` · cache ${formatRemaining(st.remainingMs)} left`
@@ -241,15 +247,15 @@ export function toView(s: KeepWarm, now: number, isWaiting = false): View {
   let color: string = MODE_COLOR[s.mode]
   switch (st.kind) {
     case 'off':
-      band = `Keep cache warm: off${left} · pings and compactions are billed; ${maxPings} pings at most`
+      band = `Keep cache warm: off${left} · Keep warm pings before the cache expires; Compact summarizes the conversation once; Warm → compact pings, then summarizes · pings and compactions are billed; ${maxPings} pings at most`
       color = STATE_COLOR.off
       break
     case 'paused':
       color = STATE_COLOR.paused
       band =
         s.pauseReason === 'not-caching'
-          ? `Keep cache warm paused: the last ping found the cache already cold, so it is not lasting an hour here${left}`
-          : `Keep cache warm paused after ${maxPings} pings with no message from you${left}`
+          ? `⏸ Paused: the last ping found the cache already cold, so it is not lasting an hour here${left}`
+          : `⏸ Paused after ${maxPings} pings with no message from you; send a message or press Resume${left} · ${totalsText(s.pingTotals)}`
       break
     case 'waiting':
       band = `${title} · waiting on you${left}`
@@ -268,12 +274,17 @@ export function toView(s: KeepWarm, now: number, isWaiting = false): View {
     }
     case 'compacted':
       color = STATE_COLOR.compacted
-      band = `Compacted before the cache expired; your next message starts a fresh cache`
+      band = `✓ Compacted before the cache expired; your next message starts a fresh cache`
       break
     case 'problem':
-      // Amber, not red, once a ping has kept the cache warm in the failed action's place.
-      color = s.lastProblem?.endsWith(FALLBACK_SUFFIX) ? STATE_COLOR.paused : STATE_COLOR.problem
-      band = `Failed: ${s.lastProblem}${left}`
+      if (isRescued(s)) {
+        // A ping kept the cache warm in the failed action's place: amber, and the countdown stands.
+        color = STATE_COLOR.paused
+        band = `Kept warm by a ping instead; ${(s.lastProblem ?? '').slice(0, -FALLBACK_SUFFIX.length)}${left}`
+      } else {
+        color = STATE_COLOR.problem
+        band = `✕ Failed: ${s.lastProblem}${left}`
+      }
       break
     case 'cold':
       color = STATE_COLOR.cold
@@ -282,7 +293,7 @@ export function toView(s: KeepWarm, now: number, isWaiting = false): View {
         : s.lastOutputAt === null
           ? `${title} · no cached conversation yet; your next message warms it`
           : s.lastProblem !== null
-            ? `Cache expired after a failure: ${s.lastProblem}`
+            ? `✕ Cache expired after a failure: ${s.lastProblem}`
             : `${title} · cache expired; your next message warms it`
       break
     case 'due':
@@ -296,7 +307,10 @@ export function toView(s: KeepWarm, now: number, isWaiting = false): View {
     kind: st.kind,
     mode: s.isEnabled ? s.mode : null,
     color,
-    status: statusText(st),
+    status:
+      st.kind === 'problem' && isRescued(s) && st.remainingMs !== null
+        ? `Cache: ${formatRemaining(st.remainingMs)}`
+        : statusText(st),
     band: band + heartbeat,
   }
 }
@@ -321,10 +335,16 @@ export function fmtTokens(n: number): string {
 }
 
 /** What a ping's first request got from the cache: the saving, in the person's terms. */
-export function pingUsageText(usage: ModelUsage): string {
+export function pingUsageText(usage: ModelUsage, totals?: KeepWarm['pingTotals']): string {
   const total = usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens
   const pct = total === 0 ? 0 : Math.round((usage.cache_read_input_tokens / total) * 100)
-  return `Ping read ${pct}% of its ${fmtTokens(total)} input tokens from the cache.`
+  const one = `Ping read ${pct}% of its ${fmtTokens(total)} input tokens from the cache.`
+  return totals && totals.count > 1 ? `${one} ${totalsText(totals)}.` : one
+}
+
+/** "This session: 3 pings, 216.0K tokens read from the cache, 1.2K written". */
+export function totalsText(t: KeepWarm['pingTotals']): string {
+  return `This session: ${t.count} ping${t.count === 1 ? '' : 's'}, ${fmtTokens(t.read)} tokens read from the cache, ${fmtTokens(t.written)} written`
 }
 
 export function compactedText(tokensBefore?: number, tokensAfter?: number): string {

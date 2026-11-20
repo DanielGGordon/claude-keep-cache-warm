@@ -1,13 +1,13 @@
 {
   "name": "keep-cache-warm",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Keeps the Claude prompt cache warm: a bar above the prompt with Keep warm, Compact and Warm-then-compact modes, a status-line countdown, and a ping or compaction about 5 minutes before the 1-hour cache expires.",
   "types": "./types/index.d.ts",
   "userConfig": {
     "defaultMode": {
       "type": "string",
       "title": "Start each session in",
-      "description": "The mode a new session starts in. off leaves it to you: pick a mode in the bar.",
+      "description": "The mode every new session starts in. off leaves it to you: pick a mode in the bar. A mode here means every session you open pings while you are away, up to the budget below.",
       "default": "off",
       "options": [
         "off",
@@ -21,6 +21,12 @@
       "title": "Pings before it stops",
       "description": "Keep-alive pings in a row with no message from you before Keep warm pauses and Warm then compact compacts instead (1 to 50). Each ping is a billed model call.",
       "default": 8
+    },
+    "fallbackPing": {
+      "type": "boolean",
+      "title": "Ping when a compaction fails",
+      "description": "If a compaction fails, send one keep-alive ping in its place (it counts against the ping budget) so the cache is still warm when you come back.",
+      "default": true
     }
   }
 }

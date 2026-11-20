@@ -235,7 +235,7 @@ test('pauses after 8 pings with a toast, sends no 9th, and a user message resume
   }
   expect(w.status()).toBe('Cache: paused')
   expect(w.toasts.some(t => t.startsWith('Keep cache warm paused: 8 pings in a row'))).toBe(true)
-  expect(await w.bandText()).toContain('paused after 8 pings')
+  expect(await w.bandText()).toContain('Paused after 8 pings')
 
   await w.clock.advance(3 * 60 * MIN)
   expect(w.pings().length).toBe(8)
@@ -527,9 +527,9 @@ test('a vetoed compaction toasts, stays in the bar, and a keep-alive ping keeps 
   // One ping stands in for the failed compaction.
   expect(w.pings().length).toBe(1)
   await w.pingTurn('p1')
-  // ...and the bar keeps saying what happened, rather than "compaction due now".
-  expect(w.status()).toBe('Cache: failed')
-  expect(await w.bandText()).toContain('compaction skipped: a hook said no; a keep-alive ping was sent instead')
+  // ...and the bar keeps saying what happened; the cache is warm again, so the countdown stands.
+  expect(w.status()).toBe('Cache: 60m')
+  expect(await w.bandText()).toContain('Kept warm by a ping instead; compaction skipped: a hook said no')
   // The next idle period tries to compact again; nothing more goes out before it.
   await w.clock.advance(50 * MIN)
   expect(w.compactions.length).toBe(1)
@@ -550,6 +550,33 @@ test('a compaction that keeps failing stands in pings only up to the budget', as
   expect(w.status()).toBe('Cache: paused')
 })
 
+test('with fallbackPing off, a failed compaction sends nothing in its place', { options: { fallbackPing: false } }, async ($, on) => {
+  const w = world($, on)
+  await w.start()
+  w.compactAnswer = { skip: 'no' }
+  await w.press('compact')
+  await w.user('hello', 'u1')
+  await w.clock.advance(55 * MIN)
+  expect(w.compactions.length).toBe(1)
+  expect(w.pings().length).toBe(0)
+  expect(w.status()).toBe('Cache: failed')
+})
+
+test('each ping reports the session totals, and the pause shows them', { options: { maxPings: 2 } }, async ($, on) => {
+  const w = world($, on)
+  await w.start()
+  await w.press('warm')
+  await w.user('hello', 'u1')
+  await w.clock.advance(55 * MIN)
+  await w.pingTurn('p1')
+  await w.clock.advance(55 * MIN)
+  await w.pingTurn('p2')
+  expect(w.toasts).toContain(
+    'Ping read 100% of its 50.1K input tokens from the cache. This session: 2 pings, 100.0K tokens read from the cache, 200 written.',
+  )
+  expect(await w.bandText()).toContain('This session: 2 pings, 100.0K tokens read from the cache, 200 written')
+})
+
 test('the maxPings setting sets the budget', { options: { maxPings: 2 } }, async ($, on) => {
   const w = world($, on)
   await w.start()
@@ -562,7 +589,7 @@ test('the maxPings setting sets the budget', { options: { maxPings: 2 } }, async
   await w.clock.advance(55 * MIN)
   await w.pingTurn('p2')
   expect(w.status()).toBe('Cache: paused')
-  expect(await w.bandText()).toContain('paused after 2 pings')
+  expect(await w.bandText()).toContain('Paused after 2 pings')
   await w.clock.advance(55 * MIN)
   expect(w.pings().length).toBe(2)
 })

@@ -49,7 +49,7 @@ import {
 
 // One atom for all the logic state, so each change is one atomic update.
 // Change the tag when KeepWarm's fields change: it declines older values.
-const S = atom({ plugin: 'keep-cache-warm', key: 's' } as const, INITIAL, { shape: 'kw-5' })
+const S = atom({ plugin: 'keep-cache-warm', key: 's' } as const, INITIAL, { shape: 'kw-6' })
 // The derived display; the band reads only this, so it redraws only when the text changes.
 const V = atom({ plugin: 'keep-cache-warm', key: 'view' } as const, null, { shape: 'view-4' })
 
@@ -269,13 +269,13 @@ export const register: Register = (on, options) => {
       if (!v.isEnabled || v.pingFiredAt !== null || v.busyTurnId !== null) return v
       if (remainingMs === null || remainingMs < FALLBACK_MIN_MS) return v
       if (v.consecutivePings >= getMaxPings()) return v
+      if (options.fallbackPing === false) return v
       claimAt = now
       return {
         ...v,
         pingFiredAt: now,
         lastPingAnchor: v.lastOutputAt,
         isFallbackPing: true,
-        lastProblem: v.lastProblem === null ? null : `${v.lastProblem}${FALLBACK_SUFFIX}`,
       }
     })
     if (claimAt === null) return
@@ -621,6 +621,8 @@ export const register: Register = (on, options) => {
         pingTurnId: e.turnId,
         countedClaim: v.pingFiredAt,
         pingFiredAt: null,
+        // Kept to the ping's first request, where its outcome is known.
+        isFallbackPing: v.isFallbackPing,
       }
       if (isStalePing(v, now)) return { ...claimed, isPingTurnStale: true }
       if (v.countedClaim === v.pingFiredAt) return claimed
@@ -665,12 +667,28 @@ export const register: Register = (on, options) => {
       const usage = r.usage
       // The ping's first request read little from the cache: the cache is not lasting an hour here.
       const isCold = isPingTurn && e.index === 0 && isCacheCold(usage)
-      await update($, S, (v): KeepWarm => {
+      const isFirstPingRequest = isPingTurn && e.index === 0
+      const s2 = await update($, S, (v): KeepWarm => {
         const anchor = Math.max(v.lastOutputAt ?? 0, sentAt)
         const moved: KeepWarm = {
           ...v,
           lastOutputAt: anchor,
           pingAttempts: anchor !== v.lastOutputAt ? 0 : v.pingAttempts,
+          ...(isFirstPingRequest
+            ? {
+                pingTotals: {
+                  count: v.pingTotals.count + 1,
+                  read: v.pingTotals.read + usage.cache_read_input_tokens,
+                  written: v.pingTotals.written + usage.cache_creation_input_tokens,
+                },
+                // A ping that stood in for a failed compaction got through: say so.
+                isFallbackPing: false,
+                lastProblem:
+                  v.isFallbackPing && v.lastProblem !== null && !v.lastProblem.endsWith(FALLBACK_SUFFIX)
+                    ? `${v.lastProblem}${FALLBACK_SUFFIX}`
+                    : v.lastProblem,
+              }
+            : {}),
         }
         return isCold
           ? { ...moved, pausedAt: v.pausedAt ?? sentAt, pauseReason: 'not-caching' }
@@ -679,7 +697,7 @@ export const register: Register = (on, options) => {
       if (isCold) $.ui.toast(notCachingToast(usage))
       else if (isPingTurn && e.index === 0) {
         // What the ping bought: how much of the conversation the cache served.
-        const text = pingUsageText(usage)
+        const text = pingUsageText(usage, s2.pingTotals)
         $.ui.toast(text)
         if (isRemoteSurface) $.ui.log(noteText(text), { to: 'transcript' })
       }
@@ -821,10 +839,11 @@ export const register: Register = (on, options) => {
         <Button key="off" label={withKey('Off', 'o')} hotkey="o" onPress={turnOff} />
       ),
     ]
-    // A key hint where there is no chip to show it: the terminal's buttons carry no hotkey letters.
-    const hint =
-      isTerminal && view.kind === 'off' ? ' · keys: ctrl+x, tab, letter' : ''
-    const text = `${view.band}${hint}`
+    // The keyboard route, first thing in the Off bar on the terminal (it has no clicks in its classic renderer).
+    const text =
+      isTerminal && view.kind === 'off'
+        ? view.band.replace('Keep cache warm: off', 'Keep cache warm: off · ctrl+x tab, then w c or t')
+        : view.band
 
     // One row when the text and the buttons both fit; otherwise the text over the buttons, so
     // a long state never pushes a button (Off above all) out of reach. A desktop always stacks:
