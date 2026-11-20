@@ -12,8 +12,16 @@ export const NAME = 'keep-cache-warm'
 export const TTL_MS = 60 * 60_000
 /** Ping this long before the cache expires. */
 export const LEAD_MS = 5 * 60_000
-/** Pings in a row with no message from the person before pausing. */
+/** Pings in a row with no message from the person before pausing (the default of the `maxPings` setting). */
 export const MAX_PINGS = 8
+let maxPings = MAX_PINGS
+/** The ping budget in force: the `maxPings` setting, 1 to 50, or 8. */
+export function getMaxPings(): number {
+  return maxPings
+}
+export function setMaxPings(n: unknown): void {
+  maxPings = typeof n === 'number' && Number.isFinite(n) ? Math.min(50, Math.max(1, Math.round(n))) : MAX_PINGS
+}
 /** Submit attempts per idle period; only a thrown submit retries. */
 export const MAX_ATTEMPTS = 3
 export const RETRY_MS = 30_000
@@ -23,6 +31,10 @@ export const HOLD_RECHECK_MS = 60_000
 export const FRESH_FIRE_MS = 2 * 60_000
 /** After an accepted submit, count the ping here if turn.start did not. */
 export const COUNT_FALLBACK_MS = 60_000
+/** Appended to the problem text when a ping stood in for a failed compaction. */
+export const FALLBACK_SUFFIX = '; a keep-alive ping was sent instead'
+/** A fallback ping is not sent with less than this left on the cache. */
+export const FALLBACK_MIN_MS = 30_000
 /** A /compact command that has not reported a compaction by this long is a failure. */
 export const COMPACT_CHECK_MS = 3 * 60_000
 /** A re-check later than this past an armed deadline re-arms the ping timer. */
@@ -60,6 +72,8 @@ export const INITIAL: KeepWarm = {
   isHeldByBackground: false,
   hasHeartbeat: false,
   lastProblem: null,
+  isFallbackPing: false,
+  isTouched: false,
 }
 
 export type CacheState = {
@@ -84,15 +98,15 @@ export function isFiring(s: KeepWarm, now: number): boolean {
 export const MODES: readonly Mode[] = ['warm', 'compact', 'warm-then-compact']
 
 /** Button labels, and the band's title while the mode runs. */
-export const MODE_LABEL: Record<Mode, string> = {
-  warm: 'Keep warm',
-  compact: 'Compact before expiry',
-  'warm-then-compact': `Warm, then compact after ${MAX_PINGS}`,
+export function modeLabel(mode: Mode): string {
+  return { warm: 'Keep warm', compact: 'Compact before expiry', 'warm-then-compact': `Warm, then compact after ${maxPings}` }[mode]
 }
-const MODE_TITLE: Record<Mode, string> = {
-  warm: 'Keeping cache warm',
-  compact: 'Compacting before expiry',
-  'warm-then-compact': `Warm → compact after ${MAX_PINGS} pings`,
+function modeTitle(mode: Mode): string {
+  return {
+    warm: 'Keeping cache warm',
+    compact: 'Compacting before expiry',
+    'warm-then-compact': `Warm → compact after ${maxPings} pings`,
+  }[mode]
 }
 /**
  * Explicit colors (theme keys are not drawn everywhere): t3code's warm orange,
@@ -171,7 +185,8 @@ export function isClaimable(s: KeepWarm, now: number): boolean {
  * (the authoritative, dequeue-time guard).
  */
 export function isStalePing(s: KeepWarm, now: number): boolean {
-  if (!s.isEnabled || s.pausedAt !== null || s.hasFailed || nextAction(s) !== 'ping') return true
+  if (!s.isEnabled || s.pausedAt !== null || s.hasFailed) return true
+  if (nextAction(s) !== 'ping' && !s.isFallbackPing) return true
   if (s.lastOutputAt === null || s.lastOutputAt !== s.lastPingAnchor) return true
   if (now >= s.lastOutputAt + TTL_MS) return true
   return s.lastUserAt !== null && s.pingFiredAt !== null && s.lastUserAt > s.pingFiredAt
@@ -217,16 +232,16 @@ export function toView(s: KeepWarm, now: number, isWaiting = false): View {
   const left = st.remainingMs === null ? '' : ` · cache ${formatRemaining(st.remainingMs)} left`
   const sent =
     s.consecutivePings > 0
-      ? ` · ${s.consecutivePings} of ${MAX_PINGS} pings sent`
+      ? ` · ${s.consecutivePings} of ${maxPings} pings sent`
       : ''
   const heartbeat = s.hasHeartbeat ? ' · also kept warm by the subagent heartbeat' : ''
-  const title = MODE_TITLE[s.mode]
+  const title = modeTitle(s.mode)
   const action: 'ping' | 'compaction' = nextAction(s) === 'compact' ? 'compaction' : 'ping'
   let band: string
   let color: string = MODE_COLOR[s.mode]
   switch (st.kind) {
     case 'off':
-      band = `Keep cache warm: off${left} · pings and compactions are billed model calls; ${MAX_PINGS} pings at most`
+      band = `Keep cache warm: off${left} · pings and compactions are billed; ${maxPings} pings at most`
       color = STATE_COLOR.off
       break
     case 'paused':
@@ -234,7 +249,7 @@ export function toView(s: KeepWarm, now: number, isWaiting = false): View {
       band =
         s.pauseReason === 'not-caching'
           ? `Keep cache warm paused: the last ping found the cache already cold, so it is not lasting an hour here${left}`
-          : `Keep cache warm paused after ${MAX_PINGS} pings with no message from you${left}`
+          : `Keep cache warm paused after ${maxPings} pings with no message from you${left}`
       break
     case 'waiting':
       band = `${title} · waiting on you${left}`
@@ -256,7 +271,8 @@ export function toView(s: KeepWarm, now: number, isWaiting = false): View {
       band = `Compacted before the cache expired; your next message starts a fresh cache`
       break
     case 'problem':
-      color = STATE_COLOR.problem
+      // Amber, not red, once a ping has kept the cache warm in the failed action's place.
+      color = s.lastProblem?.endsWith(FALLBACK_SUFFIX) ? STATE_COLOR.paused : STATE_COLOR.problem
       band = `Failed: ${s.lastProblem}${left}`
       break
     case 'cold':
@@ -286,10 +302,10 @@ export function toView(s: KeepWarm, now: number, isWaiting = false): View {
 }
 
 export function pingToast(n: number, mode: Mode = 'warm'): string {
-  if (n < MAX_PINGS) return `Keep-alive ping sent to keep the prompt cache warm (${n} of ${MAX_PINGS}).`
+  if (n < maxPings) return `Keep-alive ping sent to keep the prompt cache warm (${n} of ${maxPings}).`
   return mode === 'warm-then-compact'
-    ? `Ping ${MAX_PINGS} of ${MAX_PINGS} sent. Next time the conversation is compacted instead.`
-    : `Keep cache warm paused: ${MAX_PINGS} pings in a row with no message from you (the ${MAX_PINGS}th just went out). The cache stays warm for about another hour; send a message or press Resume to continue.`
+    ? `Ping ${maxPings} of ${maxPings} sent. Next time the conversation is compacted instead.`
+    : `Keep cache warm paused: ${maxPings} pings in a row with no message from you. The cache stays warm for about another hour; send a message or press Resume to continue.`
 }
 
 export function notCachingToast(usage: ModelUsage): string {

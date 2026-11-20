@@ -13,12 +13,15 @@ import type { KeepWarm, Mode, View } from '../types'
 import {
   ARM_SLACK_MS,
   COMPACT_CHECK_MS,
+  FALLBACK_MIN_MS,
+  FALLBACK_SUFFIX,
   COUNT_FALLBACK_MS,
   HEARTBEAT_RE,
   HOLD_RECHECK_MS,
   INITIAL,
   MAX_ATTEMPTS,
-  MAX_PINGS,
+  getMaxPings,
+  setMaxPings,
   NAME,
   OWN_DROP,
   PING_MARK,
@@ -26,7 +29,7 @@ import {
   RETRY_MS,
   STALE_ANSWER,
   TTL_MS,
-  MODE_LABEL,
+  modeLabel,
   MODES,
   cacheState,
   cleanError,
@@ -46,7 +49,7 @@ import {
 
 // One atom for all the logic state, so each change is one atomic update.
 // Change the tag when KeepWarm's fields change: it declines older values.
-const S = atom({ plugin: 'keep-cache-warm', key: 's' } as const, INITIAL, { shape: 'kw-4' })
+const S = atom({ plugin: 'keep-cache-warm', key: 's' } as const, INITIAL, { shape: 'kw-5' })
 // The derived display; the band reads only this, so it redraws only when the text changes.
 const V = atom({ plugin: 'keep-cache-warm', key: 'view' } as const, null, { shape: 'view-4' })
 
@@ -71,6 +74,7 @@ type Ops = {
   status: (text: string | undefined) => void
   toast: (text: string) => void
   log: (text: string) => void
+  focus: (requestId: string, key: string) => void
   note: (text: string) => void
   after: (ms: number, fn: () => void) => Timer
   agents: () => Promise<AgentInfo[]>
@@ -79,7 +83,10 @@ type Ops = {
   compact: () => Promise<SessionCompactResult>
 }
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
+  // Settings (the plugin's userConfig): the ping budget, and the mode a new session starts in.
+  setMaxPings(options.maxPings)
+  const defaultMode: Mode | null = MODES.find(m => m === options.defaultMode) ?? null
   let ops: Ops | null = null
   let pingTimer: Timer | null = null
   let pingDeadline: number | null = null
@@ -92,6 +99,8 @@ export const register: Register = on => {
    * the person typed, so a transcript note says whose it is; the terminal labels it itself.
    */
   let isRemoteSurface = false
+  /** The band's site, for moving its focus ring ($.ui.focus). */
+  let bandRequestId: string | null = null
   /** A remote surface labels a plugin's transcript line with its name; the terminal does not. */
   const noteText = (text: string) => (isRemoteSurface ? text : `keep-cache-warm: ${text}`)
   /** This host refuses $.session.compact (headless): run the /compact command instead. */
@@ -216,6 +225,7 @@ export const register: Register = on => {
         lastPingAnchor: v.lastOutputAt,
         pingAttempts: v.pingAttempts + 1,
         isHeldByBackground: false,
+        isFallbackPing: false,
       }
     })
     if (!isClaimed) return
@@ -229,6 +239,10 @@ export const register: Register = on => {
       return
     }
     if (isRemoteSurface && attempt === 1) o.note('sending a keep-alive ping automatically (not typed by you) to keep the prompt cache warm')
+    sendPing(o, claimAt)
+  }
+
+  function sendPing(o: Ops, claimAt: number): void {
     // Never awaited: it resolves only as the ping's own turn starts.
     void o.submit(PING_TEXT).then(
       r =>
@@ -238,6 +252,36 @@ export const register: Register = on => {
         }),
       err => serial(() => onThrew(o, claimAt, 'ping', err)),
     )
+  }
+
+  /**
+   * A compaction that failed for good leaves the cache to expire. While there is
+   * time left and ping budget to spend, one keep-alive ping stands in for it, so
+   * the conversation is still warm when the person is back. It counts against the
+   * budget like any ping, so a host that never compacts cannot ping forever.
+   */
+  async function fallbackPing(o: Ops): Promise<void> {
+    const now = await o.now()
+    let claimAt: number | null = null
+    await o.set(v => {
+      claimAt = null
+      const { remainingMs } = cacheState(v, now)
+      if (!v.isEnabled || v.pingFiredAt !== null || v.busyTurnId !== null) return v
+      if (remainingMs === null || remainingMs < FALLBACK_MIN_MS) return v
+      if (v.consecutivePings >= getMaxPings()) return v
+      claimAt = now
+      return {
+        ...v,
+        pingFiredAt: now,
+        lastPingAnchor: v.lastOutputAt,
+        isFallbackPing: true,
+        lastProblem: v.lastProblem === null ? null : `${v.lastProblem}${FALLBACK_SUFFIX}`,
+      }
+    })
+    if (claimAt === null) return
+    o.note('the compaction failed, so a keep-alive ping keeps the cache warm instead')
+    await syncNow(o)
+    sendPing(o, claimAt)
   }
 
   /** A failure the person should see: kept in the bar and noted in the transcript. */
@@ -265,6 +309,7 @@ export const register: Register = on => {
             await o.set(v => (v.pingFiredAt === claimAt ? { ...v, pingFiredAt: null } : v))
             await problem(o, `/compact ran but compacted nothing${r.text ? `: ${r.text}` : ''}`)
             await syncNow(o)
+            await fallbackPing(o)
           }),
         err => {
           promptCompactClaim = null
@@ -294,6 +339,7 @@ export const register: Register = on => {
         await o.set(v => (v.pingFiredAt === claimAt ? { ...v, pingFiredAt: null } : v))
         await problem(o, 'compaction did not finish: the /compact command never reported a compaction')
         await syncNow(o)
+        await fallbackPing(o)
       })
     })
   }
@@ -311,6 +357,7 @@ export const register: Register = on => {
       await problem(o, `${what} not sent: ${reason}`)
     }
     await syncNow(o)
+    if (what === 'compaction' && reason !== OWN_DROP) await fallbackPing(o)
   }
 
   async function onCompacted(o: Ops, claimAt: number, r: SessionCompactResult): Promise<void> {
@@ -319,6 +366,9 @@ export const register: Register = on => {
       await o.set(v => (v.pingFiredAt === claimAt ? { ...v, pingFiredAt: null } : v))
       o.toast(`Compaction skipped: ${r.skip}`)
       await problem(o, `compaction skipped: ${r.skip}`)
+      await syncNow(o)
+      await fallbackPing(o)
+      return
     } else {
       const now = await o.now()
       await o.set(v => ({
@@ -346,11 +396,11 @@ export const register: Register = on => {
     )
     const reason = cleanError(err)
     o.log(`keep-cache-warm: ${what} failed: ${String(err)}`)
-    if (s.pingAttempts >= MAX_ATTEMPTS) {
-      await problem(o, `${what} failed after ${MAX_ATTEMPTS} tries: ${reason}`)
-    }
+    const isFinal = s.pingAttempts >= MAX_ATTEMPTS
+    if (isFinal) await problem(o, `${what} failed after ${MAX_ATTEMPTS} tries: ${reason}`)
     retryAfter = (await o.now()) + RETRY_MS
     await syncNow(o)
+    if (isFinal && what === 'compaction') await fallbackPing(o)
   }
 
   /** Counts an accepted ping whose turn.start did not recognise it (normally a no-op). */
@@ -374,8 +424,8 @@ export const register: Register = on => {
           return {
             ...cleared,
             consecutivePings: counted,
-            pausedAt: counted >= MAX_PINGS ? (v.pausedAt ?? now) : v.pausedAt,
-            pauseReason: counted >= MAX_PINGS ? (v.pauseReason ?? 'limit') : v.pauseReason,
+            pausedAt: counted >= getMaxPings() ? (v.pausedAt ?? now) : v.pausedAt,
+            pauseReason: counted >= getMaxPings() ? (v.pauseReason ?? 'limit') : v.pauseReason,
           }
         })
         if (counted > 0) o.toast(pingToast(counted, mode))
@@ -395,19 +445,21 @@ export const register: Register = on => {
     retryAfter = 0
     const s = await o.set(v =>
       v.isEnabled && !isHalted(v) && v.pausedAt === null
-        ? { ...v, mode, lastProblem: null }
-        : { ...fresh(v), isEnabled: true, mode },
+        ? { ...v, mode, lastProblem: null, isTouched: true }
+        : { ...fresh(v), isEnabled: true, mode, isTouched: true },
     )
     await sync()
+    // A hotkey leaves the ring where it was: move it to the mode now running.
+    if (bandRequestId !== null) o.focus(bandRequestId, mode)
     if (cacheState(s, await o.now(), isWaiting()).kind === 'cold') {
-      o.toast(`${MODE_LABEL[mode]} is on. The cache is cold; it starts after your next message.`)
+      o.toast(`${modeLabel(mode)} is on. The cache is cold; it starts after your next message.`)
     }
   }
   const turnOn = () => setMode('warm')
   const turnOff = async () => {
     if (!ops) return
     retryAfter = 0
-    await ops.set(v => ({ ...fresh(v), isEnabled: false }))
+    await ops.set(v => ({ ...fresh(v), isEnabled: false, isTouched: true }))
     await sync()
   }
   const resume = async () => {
@@ -427,6 +479,10 @@ export const register: Register = on => {
       status: text => $.ui.status(text),
       toast: text => $.ui.toast(text),
       log: text => $.ui.log(text, { to: 'debug' }),
+      focus: (requestId, key) => {
+        // Denied when the bar does not hold the keys (a click on Desktop): nothing to move then.
+        void $.ui.focus({ requestId, key }).catch(() => undefined)
+      },
       note: text => $.ui.log(noteText(text), { to: 'transcript' }),
       after: (ms, fn) => $.clock.after(ms, fn),
       agents: () => $.agent.list(),
@@ -439,6 +495,10 @@ export const register: Register = on => {
     // A turn whose end this copy never heard (lost worker) does not block forever.
     if (s.busyTurnId !== null && (s.busySince === null || now - s.busySince > 2 * TTL_MS)) {
       await update($, S, v => ({ ...v, busyTurnId: null, busySince: null }))
+    }
+    // The defaultMode setting: a session nobody has chosen a mode in starts in it.
+    if (defaultMode !== null && !s.isEnabled && !s.isTouched) {
+      await update($, S, v => (v.isTouched || v.isEnabled ? v : { ...v, isEnabled: true, mode: defaultMode }))
     }
     lastStatus = undefined
     await sync()
@@ -552,6 +612,7 @@ export const register: Register = on => {
         isHeldByBackground: false,
         pingTurnId: null,
         isPingTurnStale: false,
+        isFallbackPing: false,
       }
       if (v.pingFiredAt === null || !e.text.includes(PING_MARK)) return base
       // This is our ping's turn: the dequeue-time guard, then count it once.
@@ -567,8 +628,8 @@ export const register: Register = on => {
       return {
         ...claimed,
         consecutivePings: counted,
-        pausedAt: counted >= MAX_PINGS ? now : v.pausedAt,
-        pauseReason: counted >= MAX_PINGS ? 'limit' : v.pauseReason,
+        pausedAt: counted >= getMaxPings() ? now : v.pausedAt,
+        pauseReason: counted >= getMaxPings() ? 'limit' : v.pauseReason,
       }
     })
     if (counted > 0) $.ui.toast(pingToast(counted, mode))
@@ -732,6 +793,7 @@ export const register: Register = on => {
     const { Box, Button, Text } = $.ui.resolve(e)
     const isTerminal = e.surface === 'terminal'
     if (!isTerminal) isRemoteSurface = true
+    bandRequestId = e.requestId
 
     // The ring starts on the running mode (Keep warm while off), so the focus box and the ● agree.
     const focusMode = MODES.find(m => isPressed(view, m)) ?? 'warm'
@@ -761,7 +823,7 @@ export const register: Register = on => {
     ]
     // A key hint where there is no chip to show it: the terminal's buttons carry no hotkey letters.
     const hint =
-      isTerminal && view.kind === 'off' ? ' · keys: ctrl+x, tab, then a letter' : ''
+      isTerminal && view.kind === 'off' ? ' · keys: ctrl+x, tab, letter' : ''
     const text = `${view.band}${hint}`
 
     // One row when the text and the buttons both fit; otherwise the text over the buttons, so
@@ -771,7 +833,8 @@ export const register: Register = on => {
       chipWidth('Resume') * (view.kind === 'paused' ? 1 : 0) +
       labels.reduce((n, l) => n + chipWidth(l), 0) +
       (view.kind !== 'off' ? chipWidth('Off (o)') : 0)
-    const fitsOneRow = isTerminal && text.length + buttonsWidth + 2 <= e.props.bodyColumns
+    // A few cells spare: the engine's [-] mark and rounding.
+    const fitsOneRow = isTerminal && text.length + buttonsWidth + 6 <= e.props.bodyColumns
 
     if (fitsOneRow) {
       return (
@@ -787,9 +850,7 @@ export const register: Register = on => {
     }
     return (
       <Box flexDirection="column" width={isTerminal ? e.props.bodyColumns : undefined}>
-        <Text color={view.color} wrap={isTerminal ? 'truncate-end' : undefined}>
-          {text}
-        </Text>
+        <Text color={view.color}>{text}</Text>
         <Box flexDirection="row" flexWrap="wrap" gap={1}>
           {buttons}
         </Box>
