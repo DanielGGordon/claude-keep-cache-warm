@@ -21,6 +21,12 @@
       "title": "Pings before it stops",
       "description": "Keep-alive pings in a row with no message from you before Keep warm pauses and Warm then compact compacts instead (1 to 50). Each ping is a billed model call.",
       "default": 8
+    },
+    "fallbackPing": {
+      "type": "boolean",
+      "title": "Ping when a compaction fails",
+      "description": "If a compaction fails, send one keep-alive ping in its place (it counts against the ping budget) so the cache is still warm when you come back.",
+      "default": true
     }
   }
 }

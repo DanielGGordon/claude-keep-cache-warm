@@ -74,6 +74,7 @@ export const INITIAL: KeepWarm = {
   lastProblem: null,
   isFallbackPing: false,
   isTouched: false,
+  pingTotals: { count: 0, read: 0, written: 0 },
 }
 
 export type CacheState = {
@@ -246,7 +247,7 @@ export function toView(s: KeepWarm, now: number, isWaiting = false): View {
   let color: string = MODE_COLOR[s.mode]
   switch (st.kind) {
     case 'off':
-      band = `Keep cache warm: off${left} · pings and compactions are billed; ${maxPings} pings at most`
+      band = `Keep cache warm: off${left} · Keep warm pings before the cache expires; Compact summarizes the conversation once; Warm → compact pings, then summarizes · pings and compactions are billed; ${maxPings} pings at most`
       color = STATE_COLOR.off
       break
     case 'paused':
@@ -254,7 +255,7 @@ export function toView(s: KeepWarm, now: number, isWaiting = false): View {
       band =
         s.pauseReason === 'not-caching'
           ? `⏸ Paused: the last ping found the cache already cold, so it is not lasting an hour here${left}`
-          : `⏸ Paused after ${maxPings} pings with no message from you; send a message or press Resume${left}`
+          : `⏸ Paused after ${maxPings} pings with no message from you; send a message or press Resume${left} · ${totalsText(s.pingTotals)}`
       break
     case 'waiting':
       band = `${title} · waiting on you${left}`
@@ -334,10 +335,16 @@ export function fmtTokens(n: number): string {
 }
 
 /** What a ping's first request got from the cache: the saving, in the person's terms. */
-export function pingUsageText(usage: ModelUsage): string {
+export function pingUsageText(usage: ModelUsage, totals?: KeepWarm['pingTotals']): string {
   const total = usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens
   const pct = total === 0 ? 0 : Math.round((usage.cache_read_input_tokens / total) * 100)
-  return `Ping read ${pct}% of its ${fmtTokens(total)} input tokens from the cache.`
+  const one = `Ping read ${pct}% of its ${fmtTokens(total)} input tokens from the cache.`
+  return totals && totals.count > 1 ? `${one} ${totalsText(totals)}.` : one
+}
+
+/** "This session: 3 pings, 216.0K tokens read from the cache, 1.2K written". */
+export function totalsText(t: KeepWarm['pingTotals']): string {
+  return `This session: ${t.count} ping${t.count === 1 ? '' : 's'}, ${fmtTokens(t.read)} tokens read from the cache, ${fmtTokens(t.written)} written`
 }
 
 export function compactedText(tokensBefore?: number, tokensAfter?: number): string {

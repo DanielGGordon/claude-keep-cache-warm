@@ -550,6 +550,33 @@ test('a compaction that keeps failing stands in pings only up to the budget', as
   expect(w.status()).toBe('Cache: paused')
 })
 
+test('with fallbackPing off, a failed compaction sends nothing in its place', { options: { fallbackPing: false } }, async ($, on) => {
+  const w = world($, on)
+  await w.start()
+  w.compactAnswer = { skip: 'no' }
+  await w.press('compact')
+  await w.user('hello', 'u1')
+  await w.clock.advance(55 * MIN)
+  expect(w.compactions.length).toBe(1)
+  expect(w.pings().length).toBe(0)
+  expect(w.status()).toBe('Cache: failed')
+})
+
+test('each ping reports the session totals, and the pause shows them', { options: { maxPings: 2 } }, async ($, on) => {
+  const w = world($, on)
+  await w.start()
+  await w.press('warm')
+  await w.user('hello', 'u1')
+  await w.clock.advance(55 * MIN)
+  await w.pingTurn('p1')
+  await w.clock.advance(55 * MIN)
+  await w.pingTurn('p2')
+  expect(w.toasts).toContain(
+    'Ping read 100% of its 50.1K input tokens from the cache. This session: 2 pings, 100.0K tokens read from the cache, 200 written.',
+  )
+  expect(await w.bandText()).toContain('This session: 2 pings, 100.0K tokens read from the cache, 200 written')
+})
+
 test('the maxPings setting sets the budget', { options: { maxPings: 2 } }, async ($, on) => {
   const w = world($, on)
   await w.start()

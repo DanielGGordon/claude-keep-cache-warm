@@ -17,7 +17,7 @@ Requirements it was built against (from the original ask):
 
 ## Current state (2026-11-20)
 
-Done and passing: `claude plugin validate .` (warnings only), `claude plugin test .` (44 of 44). Version 0.3.1 (state marks ⏸ ✕ ✓, a rescued-by-ping state with the countdown kept, the key route first in the Off bar). Version 0.3.0 adds settings (`defaultMode`, `maxPings`), focus that follows the hotkey, and a fallback ping when a compaction fails.
+Done and passing: `claude plugin validate .` (warnings only), `claude plugin test .` (46 of 46). Version 0.3.1 (session ping totals in toasts and the paused bar, a `fallbackPing` setting, a mode explainer while Off, (state marks ⏸ ✕ ✓, a rescued-by-ping state with the countdown kept, the key route first in the Off bar). Version 0.3.0 adds settings (`defaultMode`, `maxPings`), focus that follows the hotkey, and a fallback ping when a compaction fails.
 
 | Area | State |
 |---|---|
