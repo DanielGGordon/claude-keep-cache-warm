@@ -821,10 +821,11 @@ export const register: Register = (on, options) => {
         <Button key="off" label={withKey('Off', 'o')} hotkey="o" onPress={turnOff} />
       ),
     ]
-    // A key hint where there is no chip to show it: the terminal's buttons carry no hotkey letters.
-    const hint =
-      isTerminal && view.kind === 'off' ? ' · keys: ctrl+x, tab, letter' : ''
-    const text = `${view.band}${hint}`
+    // The keyboard route, first thing in the Off bar on the terminal (it has no clicks in its classic renderer).
+    const text =
+      isTerminal && view.kind === 'off'
+        ? view.band.replace('Keep cache warm: off', 'Keep cache warm: off · ctrl+x tab, then w c or t')
+        : view.band
 
     // One row when the text and the buttons both fit; otherwise the text over the buttons, so
     // a long state never pushes a button (Off above all) out of reach. A desktop always stacks:

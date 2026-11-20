@@ -40,7 +40,7 @@ In a terminal, press **ctrl+x** then **tab** to focus the bar and use its keys (
 | **Compact** | Compacts the conversation (as `/compact` does) instead of pinging, once, then waits for your next message. | blue |
 | **Warm → compact** | Pings up to 8 times, then compacts instead of pausing. | violet |
 
-The bar turns yellow when paused, red when the cache is cold, the last turn failed or a ping or compaction did not happen, green just after a compaction, and grey when off. **Resume** appears when it has paused. Switching modes while it runs keeps the ping count.
+The bar turns yellow when paused (⏸), red when the cache is cold, the last turn failed or a ping or compaction did not happen (✕), amber when a compaction failed but a ping kept the cache warm in its place, green just after a compaction (✓), and grey when off. The marks carry the state where colors are hard to tell apart. **Resume** appears when it has paused. Switching modes while it runs keeps the ping count.
 
 The bar is one row when its text and buttons fit, and two (the text over the buttons) when they don't, so no button, Off above all, is ever pushed out of reach. In the terminal, while Off, it also shows the keyboard route (`ctrl+x` then `tab`, then `w` `c` `t` `o`); the Desktop app's buttons show their letters.
 

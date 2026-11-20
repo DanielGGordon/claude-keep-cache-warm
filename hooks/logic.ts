@@ -227,6 +227,11 @@ export function statusText(st: CacheState): string {
   }
 }
 
+/** A failed compaction whose place a keep-alive ping took: the cache is warm. */
+function isRescued(s: KeepWarm): boolean {
+  return s.lastProblem?.endsWith(FALLBACK_SUFFIX) === true
+}
+
 export function toView(s: KeepWarm, now: number, isWaiting = false): View {
   const st = cacheState(s, now, isWaiting)
   const left = st.remainingMs === null ? '' : ` · cache ${formatRemaining(st.remainingMs)} left`
@@ -248,8 +253,8 @@ export function toView(s: KeepWarm, now: number, isWaiting = false): View {
       color = STATE_COLOR.paused
       band =
         s.pauseReason === 'not-caching'
-          ? `Keep cache warm paused: the last ping found the cache already cold, so it is not lasting an hour here${left}`
-          : `Keep cache warm paused after ${maxPings} pings with no message from you${left}`
+          ? `⏸ Paused: the last ping found the cache already cold, so it is not lasting an hour here${left}`
+          : `⏸ Paused after ${maxPings} pings with no message from you; send a message or press Resume${left}`
       break
     case 'waiting':
       band = `${title} · waiting on you${left}`
@@ -268,12 +273,17 @@ export function toView(s: KeepWarm, now: number, isWaiting = false): View {
     }
     case 'compacted':
       color = STATE_COLOR.compacted
-      band = `Compacted before the cache expired; your next message starts a fresh cache`
+      band = `✓ Compacted before the cache expired; your next message starts a fresh cache`
       break
     case 'problem':
-      // Amber, not red, once a ping has kept the cache warm in the failed action's place.
-      color = s.lastProblem?.endsWith(FALLBACK_SUFFIX) ? STATE_COLOR.paused : STATE_COLOR.problem
-      band = `Failed: ${s.lastProblem}${left}`
+      if (isRescued(s)) {
+        // A ping kept the cache warm in the failed action's place: amber, and the countdown stands.
+        color = STATE_COLOR.paused
+        band = `Kept warm by a ping instead; ${(s.lastProblem ?? '').slice(0, -FALLBACK_SUFFIX.length)}${left}`
+      } else {
+        color = STATE_COLOR.problem
+        band = `✕ Failed: ${s.lastProblem}${left}`
+      }
       break
     case 'cold':
       color = STATE_COLOR.cold
@@ -282,7 +292,7 @@ export function toView(s: KeepWarm, now: number, isWaiting = false): View {
         : s.lastOutputAt === null
           ? `${title} · no cached conversation yet; your next message warms it`
           : s.lastProblem !== null
-            ? `Cache expired after a failure: ${s.lastProblem}`
+            ? `✕ Cache expired after a failure: ${s.lastProblem}`
             : `${title} · cache expired; your next message warms it`
       break
     case 'due':
@@ -296,7 +306,10 @@ export function toView(s: KeepWarm, now: number, isWaiting = false): View {
     kind: st.kind,
     mode: s.isEnabled ? s.mode : null,
     color,
-    status: statusText(st),
+    status:
+      st.kind === 'problem' && isRescued(s) && st.remainingMs !== null
+        ? `Cache: ${formatRemaining(st.remainingMs)}`
+        : statusText(st),
     band: band + heartbeat,
   }
 }
