@@ -1,6 +1,6 @@
 {
   "name": "keep-cache-warm",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Keeps the Claude prompt cache warm: a bar above the prompt with Keep warm, Compact and Warm-then-compact modes, a status-line countdown, and a ping or compaction about 5 minutes before the 1-hour cache expires.",
   "types": "./types/index.d.ts",
   "userConfig": {
@@ -18,7 +18,7 @@
     },
     "maxPings": {
       "type": "number",
-      "title": "Pings before it stops",
+      "title": "Pings in a row before pausing",
       "description": "Keep-alive pings in a row with no message from you before Keep warm pauses and Warm then compact compacts instead (1 to 50), in each session. Each ping is a billed model call.",
       "default": 8
     },

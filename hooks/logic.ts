@@ -244,11 +244,13 @@ export function toView(
   const left = st.remainingMs === null ? '' : ` · cache ${formatRemaining(st.remainingMs)} left`
   const sent =
     s.consecutivePings > 0
-      ? ` · ${s.consecutivePings} of ${maxPings} pings sent`
+      ? ` · ${s.consecutivePings} of ${maxPings} pings in a row`
       : ''
   const heartbeat = s.hasHeartbeat ? ' · also kept warm by the subagent heartbeat' : ''
   // What one ping would read here, from the last request's size.
-  const perPing = s.lastPromptTokens ? ` (~${fmtTokens(s.lastPromptTokens)} cached tokens each)` : ''
+  const perPing = s.lastPromptTokens
+    ? ` (each reads ~${fmtTokens(s.lastPromptTokens)} tokens from the cache; the first can cost more)`
+    : ''
   const title = modeTitle(s.mode)
   const action: 'ping' | 'compaction' = nextAction(s) === 'compact' ? 'compaction' : 'ping'
   let band: string
@@ -257,7 +259,7 @@ export function toView(
     case 'off':
       band = opts.firstUse
         ? `Keep cache warm: off${left} · Keep warm pings before the cache expires; Compact summarizes the conversation once; Warm → compact pings, then summarizes · pings${perPing} and compactions are billed; it pauses after ${maxPings} pings in a row`
-        : `Keep cache warm: off${left} · billed pings${perPing}, pauses after ${maxPings} in a row`
+        : `Keep cache warm: off${left} · billed pings${perPing}, pauses after ${maxPings} pings in a row`
       color = STATE_COLOR.off
       break
     case 'paused': {
@@ -271,8 +273,8 @@ export function toView(
         s.pauseReason === 'not-caching'
           ? `‖ Paused: the last ping found the cache already cold, so it is not lasting an hour here${expired}`
           : s.pauseReason === 'daily'
-            ? `‖ Paused: ${opts.dailyCap ?? ''} ping${opts.dailyCap === 1 ? '' : 's'} today across all sessions, your daily cap; press Resume to go on${expired}`
-            : `‖ Paused after ${maxPings} pings with no message from you; send a message or press Resume${expired} · ${totalsText(s.pingTotals)}`
+            ? `‖ Paused: ${opts.dailyCap ?? ''} ping${opts.dailyCap === 1 ? '' : 's'} today across all sessions, your daily cap; Resume goes on for this session today${expired}`
+            : `‖ Paused after ${maxPings} pings in a row with no message from you; send a message or press Resume${expired}`
       break
     }
     case 'waiting':
@@ -312,7 +314,7 @@ export function toView(
           ? `${title} · no cached conversation yet; your next message warms it`
           : s.lastProblem !== null
             ? `✕ Cache expired after a failure: ${s.lastProblem}`
-            : `${title} · cache expired; your next message warms it`
+            : `✕ Cache expired; your next message warms it`
       break
     case 'due':
       band = `${title} · ${action} due now${left}${sent}`
