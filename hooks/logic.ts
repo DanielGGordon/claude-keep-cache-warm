@@ -74,7 +74,8 @@ export const INITIAL: KeepWarm = {
   lastProblem: null,
   isFallbackPing: false,
   isTouched: false,
-  pingTotals: { count: 0, read: 0, written: 0 },
+  pingTotals: { count: 0, read: 0, written: 0, out: 0, compactions: 0, compactTokens: 0 },
+  lastPromptTokens: null,
 }
 
 export type CacheState = {
@@ -246,6 +247,8 @@ export function toView(
       ? ` · ${s.consecutivePings} of ${maxPings} pings sent`
       : ''
   const heartbeat = s.hasHeartbeat ? ' · also kept warm by the subagent heartbeat' : ''
+  // What one ping would read here, from the last request's size.
+  const perPing = s.lastPromptTokens ? ` (~${fmtTokens(s.lastPromptTokens)} cached tokens each)` : ''
   const title = modeTitle(s.mode)
   const action: 'ping' | 'compaction' = nextAction(s) === 'compact' ? 'compaction' : 'ping'
   let band: string
@@ -253,8 +256,8 @@ export function toView(
   switch (st.kind) {
     case 'off':
       band = opts.firstUse
-        ? `Keep cache warm: off${left} · Keep warm pings before the cache expires; Compact summarizes the conversation once; Warm → compact pings, then summarizes · pings and compactions are billed; it pauses after ${maxPings} pings in a row`
-        : `Keep cache warm: off${left} · billed pings, pauses after ${maxPings} in a row`
+        ? `Keep cache warm: off${left} · Keep warm pings before the cache expires; Compact summarizes the conversation once; Warm → compact pings, then summarizes · pings${perPing} and compactions are billed; it pauses after ${maxPings} pings in a row`
+        : `Keep cache warm: off${left} · billed pings${perPing}, pauses after ${maxPings} in a row`
       color = STATE_COLOR.off
       break
     case 'paused': {
@@ -378,9 +381,20 @@ export function relativeCost(usage: ModelUsage): number | null {
   return Math.max(1, Math.round((ping / (2 * total)) * 100))
 }
 
-/** "This session: 3 pings, 216.0K tokens read from the cache, 1.2K written". */
+/**
+ * "This session: 3 pings wrote 105 tokens and 12 output (216.0K read from the cache) · 1 compaction, 70.1K tokens".
+ * What a ping costs most is what it writes and outputs; the cached read is the cheap part.
+ */
 export function totalsText(t: KeepWarm['pingTotals']): string {
-  return `This session: ${t.count} ping${t.count === 1 ? '' : 's'}, ${fmtTokens(t.read)} tokens read from the cache, ${fmtTokens(t.written)} written`
+  const pings =
+    t.count === 0
+      ? 'no pings'
+      : `${t.count} ping${t.count === 1 ? '' : 's'} wrote ${fmtTokens(t.written)} tokens and ${fmtTokens(t.out)} output (${fmtTokens(t.read)} read from the cache)`
+  const compactions =
+    t.compactions === 0
+      ? ''
+      : ` · ${t.compactions} compaction${t.compactions === 1 ? '' : 's'}${t.compactTokens > 0 ? `, ${fmtTokens(t.compactTokens)} tokens` : ''}`
+  return `This session: ${pings}${compactions}`
 }
 
 export function compactedText(tokensBefore?: number, tokensAfter?: number): string {

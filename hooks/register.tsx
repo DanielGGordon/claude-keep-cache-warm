@@ -49,7 +49,7 @@ import {
 
 // One atom for all the logic state, so each change is one atomic update.
 // Change the tag when KeepWarm's fields change: it declines older values.
-const S = atom({ plugin: 'keep-cache-warm', key: 's' } as const, INITIAL, { shape: 'kw-7' })
+const S = atom({ plugin: 'keep-cache-warm', key: 's' } as const, INITIAL, { shape: 'kw-8' })
 // The derived display; the band reads only this, so it redraws only when the text changes.
 const V = atom({ plugin: 'keep-cache-warm', key: 'view' } as const, null, { shape: 'view-4' })
 
@@ -256,6 +256,15 @@ export const register: Register = (on, options) => {
     sendPing(o, claimAt)
   }
 
+  /** A compaction into the session totals, with its own model request's tokens when reported. */
+  const addCompaction = (t: KeepWarm['pingTotals'], usage?: { input_tokens: number; output_tokens: number; cache_read_input_tokens: number; cache_creation_input_tokens: number } | null) => ({
+    ...t,
+    compactions: t.compactions + 1,
+    compactTokens:
+      t.compactTokens +
+      (usage ? usage.input_tokens + usage.output_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens : 0),
+  })
+
   /** UTC day, the key the cross-session ping count is kept under. */
   const dayOf = (ms: number) => new Date(ms).toISOString().slice(0, 10)
   async function todayCount(o: Ops, now: number): Promise<number> {
@@ -306,7 +315,7 @@ export const register: Register = (on, options) => {
       }
     })
     if (claimAt === null) return
-    o.note('the compaction failed, so a keep-alive ping keeps the cache warm instead')
+    o.note('the compaction failed; trying a keep-alive ping in its place')
     await syncNow(o)
     sendPing(o, claimAt)
   }
@@ -405,6 +414,7 @@ export const register: Register = (on, options) => {
         lastOutputAt: null,
         lastPingAnchor: null,
         lastProblem: null,
+        pingTotals: addCompaction(v.pingTotals, r.usage),
       }))
       o.toast(compactedText(r.tokensBefore, r.tokensAfter))
     }
@@ -589,7 +599,12 @@ export const register: Register = (on, options) => {
         lastPingAnchor: null,
         // Our own /compact prompt finished (a terminal session's compact() does this in onCompacted).
         ...(claim !== null && v.pingFiredAt === claim
-          ? { pingFiredAt: null, compactedAt: now, lastProblem: null }
+          ? {
+              pingFiredAt: null,
+              compactedAt: now,
+              lastProblem: null,
+              pingTotals: addCompaction(v.pingTotals, r.usage),
+            }
           : {}),
       }))
       if (claim !== null) {
@@ -712,12 +727,16 @@ export const register: Register = (on, options) => {
           ...v,
           lastOutputAt: anchor,
           pingAttempts: anchor !== v.lastOutputAt ? 0 : v.pingAttempts,
+          lastPromptTokens:
+            usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens,
           ...(isFirstPingRequest
             ? {
                 pingTotals: {
+                  ...v.pingTotals,
                   count: v.pingTotals.count + 1,
                   read: v.pingTotals.read + usage.cache_read_input_tokens,
-                  written: v.pingTotals.written + usage.cache_creation_input_tokens,
+                  written: v.pingTotals.written + usage.cache_creation_input_tokens + usage.input_tokens,
+                  out: v.pingTotals.out + usage.output_tokens,
                 },
                 // A ping that stood in for a failed compaction got through: say so.
                 isFallbackPing: false,
@@ -882,7 +901,9 @@ export const register: Register = (on, options) => {
     const text =
       isTerminal && view.kind === 'off'
         ? view.band.replace('Keep cache warm: off', 'Keep cache warm: off · ctrl+x tab, then w c or t')
-        : view.band
+        : isTerminal
+          ? `${view.band} · ctrl+x tab for keys`
+          : view.band
 
     // One row when the text and the buttons both fit; otherwise the text over the buttons, so
     // a long state never pushes a button (Off above all) out of reach. A desktop always stacks:

@@ -26,7 +26,7 @@ In the Claude desktop app (Code tab): click **+** next to the prompt box, then *
 
 ## Using it
 
-A bar above the prompt shows the cache state and the mode buttons. Until you first pick a mode it also explains the three modes; after that the Off bar is one short line.
+A bar above the prompt shows the cache state and the mode buttons. Until you first pick a mode it also explains the three modes; after that the Off bar is one short line, with what a ping would read here (`billed pings (~69.4K cached tokens each), pauses after 8 in a row`). In a terminal the bar always ends with the key route (`ctrl+x tab for keys`).
 
 `[Keep warm] [Compact] [Warm → compact] [Off]`
 
@@ -46,7 +46,7 @@ The bar is one row when its text and buttons fit, and two (the text over the but
 
 The status line shows the time left on the cache, rounded down to whole minutes (`Cache: 42m`), or the state: `off`, `busy`, `waiting`, `paused`, `cold`, `compacted` or `failed`. (The yellow ⚠ the terminal draws in front of it is Claude Code's own mark for every plugin status line; the mod cannot change it.)
 
-Toasts tell you when a ping goes out (`1 of 8`), what it got from the cache, what that cost next to rewriting the cache, and the running totals (`Ping read 100% of its 50.1K input tokens from the cache, about 5% of what rewriting the cache would cost. This session: 2 pings, 100.0K tokens read from the cache, 200 written. Today, all sessions: 5 pings.`; the share uses the standard prompt-caching multipliers: cache reads 0.1x input, 1-hour cache writes 2x, output 5x), when it pauses, when it compacts (and how many tokens that saved, when the engine reports it), and when something refused a ping or a compaction.
+Toasts tell you when a ping goes out (`1 of 8`), what it got from the cache, what that cost next to rewriting the cache, and the running totals (`Ping read 100% of its 50.1K input tokens from the cache, about 5% of what rewriting the cache would cost. This session: 2 pings wrote 220 tokens and 10 output (100.0K read from the cache) · 1 compaction, 60.9K tokens. Today, all sessions: 5 pings.`; the share uses the standard prompt-caching multipliers: cache reads 0.1x input, 1-hour cache writes 2x, output 5x), when it pauses, when it compacts (and how many tokens that saved, when the engine reports it), and when something refused a ping or a compaction.
 
 **When something goes wrong** the bar says why (for example `✕ Failed: compaction failed after 3 tries: …`), the status line reads `Cache: failed`, and a `keep-cache-warm: …` line is written into the transcript. If a ping then kept the cache warm in the failed compaction's place, the bar turns amber (`↻ Kept warm by a ping instead; …`) and the countdown stays. It clears when you send a message, pick a mode, or a later compaction succeeds.
 

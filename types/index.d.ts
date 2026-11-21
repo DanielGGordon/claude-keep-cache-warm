@@ -51,7 +51,16 @@ export type KeepWarm = {
   /** The person picked a mode or Off in this session; until then the `defaultMode` setting applies. */
   isTouched: boolean
   /** This session's pings so far: how many, and the input tokens read from and written to the cache. */
-  pingTotals: { count: number; read: number; written: number }
+  pingTotals: {
+    count: number
+    read: number
+    written: number
+    out: number
+    compactions: number
+    compactTokens: number
+  }
+  /** Input tokens of the last main request: what a ping here would read. */
+  lastPromptTokens: number | null
 }
 
 export type Kind =

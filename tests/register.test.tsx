@@ -574,9 +574,9 @@ test('each ping reports the session totals, and the pause shows them', { options
   await w.clock.advance(55 * MIN)
   await w.pingTurn('p2')
   expect(w.toasts).toContain(
-    'Ping read 100% of its 50.1K input tokens from the cache, about 5% of what rewriting the cache would cost. This session: 2 pings, 100.0K tokens read from the cache, 200 written.',
+    'Ping read 100% of its 50.1K input tokens from the cache, about 5% of what rewriting the cache would cost. This session: 2 pings wrote 220 tokens and 10 output (100.0K read from the cache).',
   )
-  expect(await w.bandText()).toContain('This session: 2 pings, 100.0K tokens read from the cache, 200 written')
+  expect(await w.bandText()).toContain('This session: 2 pings wrote 220 tokens and 10 output (100.0K read from the cache)')
 })
 
 test('the daily cap pauses keep-warm once that many pings went out today, across sessions', { options: { maxPingsPerDay: 1 } }, async ($, on) => {
@@ -593,6 +593,26 @@ test('the daily cap pauses keep-warm once that many pings went out today, across
   expect(w.pings().length).toBe(1)
   expect(w.status()).toBe('Cache: paused')
   expect(await w.bandText()).toContain('1 ping today across all sessions, your daily cap')
+})
+
+test('a compaction counts in the session totals', async ($, on) => {
+  const w = world($, on)
+  await w.start()
+  w.compactAnswer = {
+    messages: [{ role: 'user', text: 'Summary.', toolUses: [] }],
+    usage: { model: 'm', input_tokens: 60_000, output_tokens: 900, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+  } as SessionCompactResult
+  await w.press('compact')
+  await w.user('hello', 'u1')
+  await w.clock.advance(55 * MIN)
+  expect(w.compactions.length).toBe(1)
+  await w.press('warm')
+  await w.user('again', 'u2')
+  await w.clock.advance(55 * MIN)
+  await w.pingTurn('p1')
+  await w.clock.advance(55 * MIN)
+  await w.pingTurn('p2')
+  expect(w.toasts.some(t => t.includes('· 1 compaction, 60.9K tokens'))).toBe(true)
 })
 
 test('the Off bar explains the modes until a mode is first picked, then stays short', async ($, on) => {
