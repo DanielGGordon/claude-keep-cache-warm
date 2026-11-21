@@ -172,7 +172,7 @@ test('countdown floors minutes; one ping at +55m with the exact text; its own pi
   await w.pingTurn('p1')
   expect(w.toasts).toContain('Keep-alive ping sent to keep the prompt cache warm (1 of 8).')
   expect(w.status()).toBe('Cache: 60m')
-  expect(await w.bandText()).toContain('1 of 8 pings sent')
+  expect(await w.bandText()).toContain('1 of 8 pings in a row')
 
   // The count fallback does not count it twice.
   await w.clock.advance(2 * MIN)
@@ -487,7 +487,7 @@ test('a ping is noted in the transcript where the surface shows it as the person
   await w.pingTurn('p1')
   await w.clock.set(T0 + 55 * MIN + 55 * MIN + 10)
   expect(w.pings().length).toBe(2)
-  expect(w.notes).toContain('sending a keep-alive ping automatically (not typed by you) to keep the prompt cache warm')
+  expect(w.notes.some(n => n.startsWith('↑ that was a keep-alive ping sent automatically, not by you.'))).toBe(true)
   expect(w.notes.some(n => n.includes('Ping read 100% of its 50.1K input tokens from the cache'))).toBe(true)
 })
 
@@ -576,7 +576,8 @@ test('each ping reports the session totals, and the pause shows them', { options
   expect(w.toasts).toContain(
     'Ping read 100% of its 50.1K input tokens from the cache, about 5% of what rewriting the cache would cost. This session: 2 pings wrote 220 tokens and 10 output (100.0K read from the cache).',
   )
-  expect(await w.bandText()).toContain('This session: 2 pings wrote 220 tokens and 10 output (100.0K read from the cache)')
+  // The totals live in the toast and the transcript note; the paused bar stays short.
+  expect(await w.bandText()).toContain('Paused after 2 pings in a row')
 })
 
 test('the daily cap pauses keep-warm once that many pings went out today, across sessions', { options: { maxPingsPerDay: 1 } }, async ($, on) => {
@@ -615,6 +616,36 @@ test('a compaction counts in the session totals', async ($, on) => {
   expect(w.toasts.some(t => t.includes('· 1 compaction, 60.9K tokens'))).toBe(true)
 })
 
+test('Resume past the daily cap goes on for this session; a message lifts the cap pause', { options: { maxPingsPerDay: 1 } }, async ($, on) => {
+  const w = world($, on)
+  await w.start()
+  await w.clock.set(T0 + 3 * 60 * MIN)
+  await w.press('warm')
+  await w.user('hello', 'u1')
+  await w.clock.advance(55 * MIN)
+  await w.pingTurn('p1')
+  await w.clock.advance(55 * MIN)
+  expect(w.pings().length).toBe(1)
+  expect(w.status()).toBe('Cache: paused')
+  await w.press('resume')
+  await w.clock.advance(1)
+  expect(w.pings().length).toBe(2)
+})
+
+test('a message from the person lifts a daily-cap pause', { options: { maxPingsPerDay: 1 } }, async ($, on) => {
+  const w = world($, on)
+  await w.start()
+  await w.clock.set(T0 + 3 * 60 * MIN)
+  await w.press('warm')
+  await w.user('hello', 'u1')
+  await w.clock.advance(55 * MIN)
+  await w.pingTurn('p1')
+  await w.clock.advance(55 * MIN)
+  expect(w.status()).toBe('Cache: paused')
+  await w.user('back', 'u2')
+  expect(w.status()).toBe('Cache: 60m')
+})
+
 test('the Off bar explains the modes until a mode is first picked, then stays short', async ($, on) => {
   const w = world($, on)
   await w.start()
@@ -622,7 +653,7 @@ test('the Off bar explains the modes until a mode is first picked, then stays sh
   await w.press('warm')
   await w.press('off')
   const text = await w.bandText()
-  expect(text).toContain('billed pings, pauses after 8 in a row')
+  expect(text).toContain('billed pings, pauses after 8 pings in a row')
   expect(text).not.toContain('Compact summarizes')
 })
 
@@ -634,7 +665,7 @@ test('the maxPings setting sets the budget', { options: { maxPings: 2 } }, async
   expect(await w.bandText()).toContain('Keeping cache warm')
   await w.clock.advance(55 * MIN)
   await w.pingTurn('p1')
-  expect(await w.bandText()).toContain('1 of 2 pings sent')
+  expect(await w.bandText()).toContain('1 of 2 pings in a row')
   await w.clock.advance(55 * MIN)
   await w.pingTurn('p2')
   expect(w.status()).toBe('Cache: paused')

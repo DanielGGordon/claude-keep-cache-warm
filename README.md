@@ -26,7 +26,7 @@ In the Claude desktop app (Code tab): click **+** next to the prompt box, then *
 
 ## Using it
 
-A bar above the prompt shows the cache state and the mode buttons. Until you first pick a mode it also explains the three modes; after that the Off bar is one short line, with what a ping would read here (`billed pings (~69.4K cached tokens each), pauses after 8 in a row`). In a terminal the bar always ends with the key route (`ctrl+x tab for keys`).
+A bar above the prompt shows the cache state and the mode buttons. Until you first pick a mode it also explains the three modes; after that the Off bar is one short line, with what a ping would read here (`billed pings (each reads ~69.4K tokens from the cache; the first can cost more), pauses after 8 pings in a row`). In a terminal the bar always ends with the key route (`ctrl+x tab for keys`).
 
 `[Keep warm] [Compact] [Warm → compact] [Off]`
 
@@ -52,7 +52,7 @@ Toasts tell you when a ping goes out (`1 of 8`), what it got from the cache, wha
 
 ### In the Claude Desktop app
 
-The Code tab is a headless session, where the engine refuses a plugin's compact call. The mod notices and runs the `/compact` command instead (you will see a `/compact` message in the transcript, after a `keep-cache-warm:` line saying why). The Desktop app also draws a ping as if you had typed it, so the mod writes a `keep-cache-warm: sending a keep-alive ping …` line just before each one; the terminal labels the row itself.
+The Code tab is a headless session, where the engine refuses a plugin's compact call. The mod notices and runs the `/compact` command instead (you will see a `/compact` message in the transcript, after a `keep-cache-warm:` line saying why). The Desktop app also draws a ping as if you had typed it, so the mod writes one `keep-cache-warm` line right under each one (`↑ that was a keep-alive ping sent automatically, not by you. Ping read 100% …`); the terminal labels the row itself.
 
 ## Settings
 
@@ -61,8 +61,8 @@ Four settings, under `/config` (search "keep") or in the Desktop app's plugin se
 | Setting | Default | What it does |
 |---|---|---|
 | **Start each session in** | `off` | The mode a new session starts in: `off`, `warm`, `compact` or `warm-then-compact`. Picking a mode or Off in the bar wins for that session. |
-| **Pings before it stops** | `8` | Pings in a row with no message from you before Keep warm pauses and Warm → compact compacts instead (1 to 50). |
-| **Daily ping cap, all sessions** | `0` (none) | Most pings per day (UTC) across every session on this machine; past it, keep-warm pauses until you press Resume or the next day. |
+| **Pings in a row before pausing** | `8` | Pings in a row with no message from you before Keep warm pauses and Warm → compact compacts instead (1 to 50). |
+| **Daily ping cap, all sessions** | `0` (none) | Most pings per day (UTC) across every session on this machine; past it, keep-warm pauses. **Resume** goes on for that session for the rest of the day; a message from you lifts the pause and the cap is checked again at the next ping. |
 | **Ping when a compaction fails** | on | If a compaction fails, one keep-alive ping goes out in its place (counted against the budget) so the cache is still warm when you come back. |
 
 They are stored in `settings.json` under `pluginConfigs["keep-cache-warm@claude-keep-cache-warm"].options` (`defaultMode`, `maxPings`, `maxPingsPerDay`, `fallbackPing`); a change reloads the mod at once.
@@ -73,7 +73,7 @@ They are stored in `settings.json` under `pluginConfigs["keep-cache-warm@claude-
 - while background subagents are running;
 - after a failed turn, until a turn succeeds;
 - once the cache has already expired (a ping then would only pay for a full cache write);
-- after 8 pings in a row (or your **Pings before it stops** setting) with no message from you, in **Keep warm** mode. A message from you, or **Resume**, restores the count.
+- after 8 pings in a row (or your **Pings in a row before pausing** setting) with no message from you, in **Keep warm** mode. A message from you, or **Resume**, restores the count.
 
 Only messages you type count as messages from you. Task notifications, scheduled triggers, auto-continuations and other plugins don't reset the count.
 

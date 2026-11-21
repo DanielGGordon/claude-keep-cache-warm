@@ -93,6 +93,9 @@ export const register: Register = (on, options) => {
     typeof options.maxPingsPerDay === 'number' && options.maxPingsPerDay > 0 ? Math.round(options.maxPingsPerDay) : 0
   /** No mode was ever picked on this machine: the Off bar explains the modes (kept in $.store). */
   let isFirstUse = true
+  /** Resume was pressed on a daily-cap pause: the cap no longer holds this session (until the day changes). */
+  let isDailyOverride = false
+  let overrideDay: string | null = null
   const memStore = new Map<string, unknown>()
   let ops: Ops | null = null
   let pingTimer: Timer | null = null
@@ -217,7 +220,8 @@ export const register: Register = (on, options) => {
       return
     }
     // The daily cap across sessions: a ping (not a compaction) over it pauses instead.
-    if (dailyCap > 0 && nextAction(s) === 'ping' && (await todayCount(o, now)) >= dailyCap) {
+    const isOverridden = isDailyOverride && overrideDay === dayOf(now)
+    if (dailyCap > 0 && !isOverridden && nextAction(s) === 'ping' && (await todayCount(o, now)) >= dailyCap) {
       await o.set(v => (v.pausedAt === null ? { ...v, pausedAt: now, pauseReason: 'daily' } : v))
       o.toast(`Keep cache warm paused: ${dailyCap} ping${dailyCap === 1 ? '' : 's'} today across all sessions, your daily cap.`)
       await syncNow(o)
@@ -252,7 +256,6 @@ export const register: Register = (on, options) => {
       runCompaction(o, claimAt)
       return
     }
-    if (isRemoteSurface && attempt === 1) o.note('sending a keep-alive ping automatically (not typed by you) to keep the prompt cache warm')
     sendPing(o, claimAt)
   }
 
@@ -506,6 +509,12 @@ export const register: Register = (on, options) => {
   const resume = async () => {
     if (!ops) return
     retryAfter = 0
+    const s = await ops.get()
+    // Resume past the daily cap is the person's say-so: this session goes on until tomorrow.
+    if (s.pauseReason === 'daily') {
+      isDailyOverride = true
+      overrideDay = dayOf(await ops.now())
+    }
     await ops.set(fresh)
     await sync()
   }
@@ -636,8 +645,9 @@ export const register: Register = (on, options) => {
       await update($, S, v => ({
         ...v,
         consecutivePings: 0,
-        pausedAt: v.pauseReason === 'limit' ? null : v.pausedAt,
-        pauseReason: v.pauseReason === 'limit' ? null : v.pauseReason,
+        // A message from the person lifts a budget pause and a daily-cap pause; the cap is checked again at the next ping.
+        pausedAt: v.pauseReason === 'limit' || v.pauseReason === 'daily' ? null : v.pausedAt,
+        pauseReason: v.pauseReason === 'limit' || v.pauseReason === 'daily' ? null : v.pauseReason,
         lastPingAnchor: null,
         pingAttempts: 0,
         lastUserAt: now,
@@ -757,7 +767,10 @@ export const register: Register = (on, options) => {
         const today = ops ? await countToday(ops, sentAt) : undefined
         const text = pingUsageText(usage, s2.pingTotals, today)
         $.ui.toast(text)
-        if (isRemoteSurface) $.ui.log(noteText(text), { to: 'transcript' })
+        // One row under the ping, which the desktop draws as if the person had typed it.
+        if (isRemoteSurface) {
+          $.ui.log(noteText(`↑ that was a keep-alive ping sent automatically, not by you. ${text}`), { to: 'transcript' })
+        }
       }
       void sync()
     }
