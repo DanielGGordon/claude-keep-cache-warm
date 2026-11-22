@@ -239,7 +239,7 @@ export function toView(
   s: KeepWarm,
   now: number,
   isWaiting = false,
-  opts: { firstUse?: boolean; dailyCap?: number; capOverridden?: boolean } = {},
+  opts: { firstUse?: boolean; dailyCap?: number; capOverridden?: boolean; todayCount?: number } = {},
 ): View {
   const st = cacheState(s, now, isWaiting)
   const left = st.remainingMs === null ? '' : ` · cache ${formatRemaining(st.remainingMs)} left`
@@ -274,7 +274,7 @@ export function toView(
         s.pauseReason === 'not-caching'
           ? `‖ Paused: the last ping found the cache already cold, so it is not lasting an hour here${expired}`
           : s.pauseReason === 'daily'
-            ? `‖ Paused: ${opts.dailyCap ?? ''} ping${opts.dailyCap === 1 ? '' : 's'} today across all sessions, your daily cap, until 00:00 UTC (then it goes on by itself if the cache is still warm); Override goes on for this session today${expired}`
+            ? `‖ Daily cap reached: ${opts.todayCount ?? opts.dailyCap ?? ''} of ${opts.dailyCap ?? ''} pings today, all sessions · goes on by itself at 00:00 UTC if the cache is still warm${expired}`
             : `‖ Paused after ${maxPings} pings in a row with no message from you; send a message or press Resume${expired}`
       break
     }

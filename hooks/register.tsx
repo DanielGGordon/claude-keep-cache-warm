@@ -150,6 +150,7 @@ export const register: Register = (on, options) => {
     const view = toView(s, now, isWaiting(), {
       firstUse: isFirstUse,
       dailyCap,
+      todayCount: s.pauseReason === 'daily' ? await todayCount(o, now) : undefined,
       capOverridden: dailyCap > 0 && s.capOverrideDay === dayOf(now),
     })
     // While off there is nothing to say: no status line item (the terminal marks every one with a ⚠).
@@ -212,7 +213,8 @@ export const register: Register = (on, options) => {
     rolloverTimer = o.after(isNewDay ? 0 : midnight - now + 1_000, () => {
       rolloverTimer = null
       void serial(async () => {
-        await o.set(v => (v.pauseReason === 'daily' ? { ...fresh(v) } : v))
+        // A new day's count starts at 0; the in-a-row budget carries on.
+        await o.set(v => (v.pauseReason === 'daily' ? { ...fresh(v), consecutivePings: v.consecutivePings } : v))
         await syncNow(o)
       })
     })
@@ -354,7 +356,8 @@ export const register: Register = (on, options) => {
    */
   async function fallbackPing(o: Ops): Promise<void> {
     const now = await o.now()
-    if (dailyCap > 0 && (await todayCount(o, now)) >= dailyCap) return
+    const isOverridden = (await o.get()).capOverrideDay === dayOf(now)
+    if (dailyCap > 0 && !isOverridden && (await todayCount(o, now)) >= dailyCap) return
     let claimAt: number | null = null
     await o.set(v => {
       claimAt = null
@@ -566,7 +569,12 @@ export const register: Register = (on, options) => {
     const s = await ops.get()
     // Resume past the daily cap is the person's say-so: this session goes on until tomorrow (kept in $.state).
     const day = dayOf(await ops.now())
-    await ops.set(v => ({ ...fresh(v), capOverrideDay: s.pauseReason === 'daily' ? day : v.capOverrideDay }))
+    await ops.set(v =>
+      s.pauseReason === 'daily'
+        ? // Overriding the daily cap is not a fresh budget: the in-a-row count carries on.
+          { ...fresh(v), consecutivePings: v.consecutivePings, capOverrideDay: day }
+        : { ...fresh(v), capOverrideDay: v.capOverrideDay },
+    )
     await sync()
   }
 
@@ -948,7 +956,8 @@ export const register: Register = (on, options) => {
           key="resume"
           label={withKey(view.pauseReason === 'daily' ? 'Override cap today' : 'Resume', 'r')}
           hotkey="r"
-          variant="primary"
+          // Overriding a spending cap is not the main action of that pause.
+          variant={view.pauseReason === 'daily' ? 'secondary' : 'primary'}
           onPress={resume}
         />
       ),
@@ -987,8 +996,15 @@ export const register: Register = (on, options) => {
     // While armed, the key route rides along only where it does not push the buttons to a second row.
     const longRoute = `${keyed} · ctrl+x tab for keys`
     const shortRoute = `${keyed} · ctrl+x tab`
+    // One row with the full route, else one row with the short one, else stacked with the full one.
     const text =
-      !isTerminal || view.kind === 'off' ? keyed : fits(longRoute) ? longRoute : shortRoute
+      !isTerminal || view.kind === 'off'
+        ? keyed
+        : fits(longRoute)
+          ? longRoute
+          : fits(shortRoute)
+            ? shortRoute
+            : longRoute
     const fitsOneRow = fits(text)
 
     if (fitsOneRow) {
