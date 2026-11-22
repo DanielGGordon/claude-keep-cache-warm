@@ -26,7 +26,7 @@ In the Claude desktop app (Code tab): click **+** next to the prompt box, then *
 
 ## Using it
 
-A bar above the prompt shows the cache state and the mode buttons. Until you first pick a mode it also explains the three modes; after that the Off bar is one short line, with what a ping would read here (`billed pings (each reads ~69.4K tokens from the cache; the first can cost more), pauses after 8 pings in a row`). In a terminal the bar ends with the key route (`ctrl+x tab for keys`, or just `ctrl+x tab` when space is short); while Off the terminal leaves out the per-ping estimate so the line does not wrap into Claude Code's own marks.
+A bar above the prompt shows the cache state and the mode buttons. Until you first pick a mode it also explains the three modes; after that the Off bar is one short line, with what a ping would read here (`billed pings (each reads ~69.4K tokens from the cache; the first can cost more), pauses after 8 pings in a row`). In a terminal the bar ends with the key route (`ctrl+x tab for keys`, or just `ctrl+x tab` when that keeps it on one row); in the Off bar the terminal leaves out the per-ping estimate so the line does not wrap into Claude Code's own marks.
 
 `[Keep warm] [Compact] [Warm → compact] [Off]`
 
@@ -62,7 +62,7 @@ Five settings, under `/config` (search "keep") or in the Desktop app's plugin se
 |---|---|---|
 | **Start each session in** | `off` | The mode a new session starts in: `off`, `warm`, `compact` or `warm-then-compact`. Picking a mode or Off in the bar wins for that session. |
 | **Pings in a row before pausing** | `8` | Pings in a row with no message from you before Keep warm pauses and Warm → compact compacts instead (1 to 50). |
-| **Daily ping cap, all sessions (0 = none)** | `0` | Most pings per day (UTC) across every session on this machine; past it, keep-warm pauses; at 00:00 UTC the pause lifts by itself if the cache is still warm. A ping takes its slot just before it goes out (and gives it back if it is refused), so other sessions see it at once and a ping that finds the cache cold still counts. Best effort: two sessions pinging in the same instant can both take the last slot. **Override cap today** (the Resume button on that pause) lets that session go on for the rest of the day, and the bar says so; a message from you lifts the pause and the cap is checked again at the next ping. |
+| **Daily ping cap, all sessions (0 = none)** | `0` | Most pings per day (UTC) across every session on this machine; past it, keep-warm pauses; at 00:00 UTC the pause lifts by itself if the cache is still warm. A ping takes its slot just before it goes out (and gives it back if it is refused), so other sessions see it at once and a ping that finds the cache cold still counts. Best effort: two sessions pinging in the same instant can both take the last slot. **Override cap today** (the Resume button on that pause, deliberately not the main button) lets that session go on for the rest of the day without resetting its in-a-row count, and the bar says so; a message from you lifts the pause and the cap is checked again at the next ping. |
 | **Status line** | `always` | `problems` keeps the status-line item for paused, failed and cold only; the bar always has the countdown (and the terminal's ⚠ mark then only appears when something needs you). |
 | **Ping when a compaction fails** | on | If a compaction fails, one keep-alive ping goes out in its place (counted against the budget) so the cache is still warm when you come back. |
 

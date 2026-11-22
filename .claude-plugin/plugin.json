@@ -1,6 +1,6 @@
 {
   "name": "keep-cache-warm",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "description": "Keeps the Claude prompt cache warm: a bar above the prompt with Keep warm, Compact and Warm-then-compact modes, a status-line countdown, and a ping or compaction about 5 minutes before the 1-hour cache expires.",
   "types": "./types/index.d.ts",
   "userConfig": {
