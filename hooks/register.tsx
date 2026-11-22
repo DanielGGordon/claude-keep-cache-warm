@@ -151,7 +151,10 @@ export const register: Register = (on, options) => {
   async function refresh(o: Ops, s: KeepWarm, now: number): Promise<void> {
     const view = toView(s, now, isWaiting(), { firstUse: isFirstUse, dailyCap })
     // While off there is nothing to say: no status line item (the terminal marks every one with a ⚠).
-    const status = view.kind === 'off' ? undefined : view.status
+    // The statusLine setting "problems" keeps the line for paused, failed and cold only (the bar has the countdown).
+    const isQuiet =
+      options.statusLine === 'problems' && (view.kind === 'scheduled' || view.kind === 'due' || view.kind === 'busy' || view.kind === 'compacted')
+    const status = view.kind === 'off' || isQuiet ? undefined : view.status
     if (status !== lastStatus) {
       lastStatus = status
       o.status(status)
@@ -256,7 +259,7 @@ export const register: Register = (on, options) => {
       runCompaction(o, claimAt)
       return
     }
-    sendPing(o, claimAt)
+    void sendPing(o, claimAt)
   }
 
   /** A compaction into the session totals, with its own model request's tokens when reported. */
@@ -274,21 +277,50 @@ export const register: Register = (on, options) => {
     const rec = (await o.storeGet('pingDay').catch(() => undefined)) as { day?: string; count?: number } | undefined
     return rec?.day === dayOf(now) ? (rec.count ?? 0) : 0
   }
-  async function countToday(o: Ops, now: number): Promise<number> {
-    const n = (await todayCount(o, now)) + 1
-    o.storeSet('pingDay', { day: dayOf(now), count: n })
-    return n
+  /**
+   * Takes a slot of today's cross-session count just before a ping goes out (released
+   * again if the ping is refused or fails), so other sessions see it at once and a ping
+   * that finds the cache cold is counted too. False when the daily cap is spent.
+   */
+  async function reserveToday(o: Ops, now: number): Promise<boolean> {
+    const n = await todayCount(o, now)
+    const isOverridden = isDailyOverride && overrideDay === dayOf(now)
+    if (dailyCap > 0 && !isOverridden && n >= dailyCap) return false
+    o.storeSet('pingDay', { day: dayOf(now), count: n + 1 })
+    return true
+  }
+  async function releaseToday(o: Ops, now: number): Promise<void> {
+    const n = await todayCount(o, now)
+    if (n > 0) o.storeSet('pingDay', { day: dayOf(now), count: n - 1 })
   }
 
-  function sendPing(o: Ops, claimAt: number): void {
+  async function sendPing(o: Ops, claimAt: number): Promise<void> {
+    if (!(await reserveToday(o, claimAt))) {
+      // Another session took the last slot of the day: pause here instead.
+      await o.set(v => ({
+        ...v,
+        pingFiredAt: v.pingFiredAt === claimAt ? null : v.pingFiredAt,
+        pausedAt: v.pausedAt ?? claimAt,
+        pauseReason: v.pauseReason ?? 'daily',
+      }))
+      o.toast(`Keep cache warm paused: ${dailyCap} ping${dailyCap === 1 ? '' : 's'} today across all sessions, your daily cap.`)
+      await syncNow(o)
+      return
+    }
     // Never awaited: it resolves only as the ping's own turn starts.
     void o.submit(PING_TEXT).then(
       r =>
         serial(async () => {
-          if (r.drop !== undefined) await onDropped(o, claimAt, r.drop)
-          else armCountFallback(o, claimAt)
+          if (r.drop !== undefined) {
+            await releaseToday(o, claimAt)
+            await onDropped(o, claimAt, r.drop)
+          } else armCountFallback(o, claimAt)
         }),
-      err => serial(() => onThrew(o, claimAt, 'ping', err)),
+      err =>
+        serial(async () => {
+          await releaseToday(o, claimAt)
+          await onThrew(o, claimAt, 'ping', err)
+        }),
     )
   }
 
@@ -320,7 +352,7 @@ export const register: Register = (on, options) => {
     if (claimAt === null) return
     o.note('the compaction failed; trying a keep-alive ping in its place')
     await syncNow(o)
-    sendPing(o, claimAt)
+    void sendPing(o, claimAt)
   }
 
   /** A failure the person should see: kept in the bar and noted in the transcript. */
@@ -764,7 +796,7 @@ export const register: Register = (on, options) => {
       if (isCold) $.ui.toast(notCachingToast(usage))
       else if (isPingTurn && e.index === 0) {
         // What the ping bought: how much of the conversation the cache served.
-        const today = ops ? await countToday(ops, sentAt) : undefined
+        const today = ops ? await todayCount(ops, sentAt) : undefined
         const text = pingUsageText(usage, s2.pingTotals, today)
         $.ui.toast(text)
         // One row under the ping, which the desktop draws as if the person had typed it.
@@ -911,12 +943,10 @@ export const register: Register = (on, options) => {
       ),
     ]
     // The keyboard route, first thing in the Off bar on the terminal (it has no clicks in its classic renderer).
-    const text =
+    const keyed =
       isTerminal && view.kind === 'off'
         ? view.band.replace('Keep cache warm: off', 'Keep cache warm: off · ctrl+x tab, then w c or t')
-        : isTerminal
-          ? `${view.band} · ctrl+x tab for keys`
-          : view.band
+        : view.band
 
     // One row when the text and the buttons both fit; otherwise the text over the buttons, so
     // a long state never pushes a button (Off above all) out of reach. A desktop always stacks:
@@ -926,7 +956,11 @@ export const register: Register = (on, options) => {
       labels.reduce((n, l) => n + chipWidth(l), 0) +
       (view.kind !== 'off' ? chipWidth('Off (o)') : 0)
     // A few cells spare: the engine's [-] mark and rounding.
-    const fitsOneRow = isTerminal && text.length + buttonsWidth + 6 <= e.props.bodyColumns
+    const fits = (t: string) => isTerminal && t.length + buttonsWidth + 6 <= e.props.bodyColumns
+    // While armed, the key route rides along only where it does not push the buttons to a second row.
+    const withRoute = isTerminal && view.kind !== 'off' ? `${keyed} · ctrl+x tab for keys` : keyed
+    const text = fits(withRoute) ? withRoute : keyed
+    const fitsOneRow = fits(text)
 
     if (fitsOneRow) {
       return (

@@ -56,16 +56,17 @@ The Code tab is a headless session, where the engine refuses a plugin's compact 
 
 ## Settings
 
-Four settings, under `/config` (search "keep") or in the Desktop app's plugin settings:
+Five settings, under `/config` (search "keep") or in the Desktop app's plugin settings:
 
 | Setting | Default | What it does |
 |---|---|---|
 | **Start each session in** | `off` | The mode a new session starts in: `off`, `warm`, `compact` or `warm-then-compact`. Picking a mode or Off in the bar wins for that session. |
 | **Pings in a row before pausing** | `8` | Pings in a row with no message from you before Keep warm pauses and Warm → compact compacts instead (1 to 50). |
-| **Daily ping cap, all sessions** | `0` (none) | Most pings per day (UTC) across every session on this machine; past it, keep-warm pauses. **Resume** goes on for that session for the rest of the day; a message from you lifts the pause and the cap is checked again at the next ping. |
+| **Daily ping cap, all sessions (0 = none)** | `0` | Most pings per day (UTC) across every session on this machine; past it, keep-warm pauses until 00:00 UTC. A ping takes its slot just before it goes out (and gives it back if it is refused), so other sessions see it at once and a ping that finds the cache cold still counts. **Resume** goes on for that session for the rest of the day; a message from you lifts the pause and the cap is checked again at the next ping. |
+| **Status line** | `always` | `problems` keeps the status-line item for paused, failed and cold only; the bar always has the countdown (and the terminal's ⚠ mark then only appears when something needs you). |
 | **Ping when a compaction fails** | on | If a compaction fails, one keep-alive ping goes out in its place (counted against the budget) so the cache is still warm when you come back. |
 
-They are stored in `settings.json` under `pluginConfigs["keep-cache-warm@claude-keep-cache-warm"].options` (`defaultMode`, `maxPings`, `maxPingsPerDay`, `fallbackPing`); a change reloads the mod at once.
+They are stored in `settings.json` under `pluginConfigs["keep-cache-warm@claude-keep-cache-warm"].options` (`defaultMode`, `maxPings`, `maxPingsPerDay`, `statusLine`, `fallbackPing`); a change reloads the mod at once.
 
 ## When it does nothing
 
