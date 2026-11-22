@@ -646,6 +646,35 @@ test('a message from the person lifts a daily-cap pause', { options: { maxPingsP
   expect(w.status()).toBe('Cache: 60m')
 })
 
+test('statusLine "problems" keeps the status line for trouble only', { options: { statusLine: 'problems', maxPings: 1 } }, async ($, on) => {
+  const w = world($, on)
+  await w.start()
+  await w.press('warm')
+  await w.user('hello', 'u1')
+  expect(w.status() ?? '').toBe('')
+  await w.clock.advance(55 * MIN)
+  await w.pingTurn('p1')
+  expect(w.status()).toBe('Cache: paused')
+})
+
+test('a ping that finds the cache cold still counts against the daily cap', { options: { maxPingsPerDay: 1 } }, async ($, on) => {
+  const w = world($, on)
+  await w.start()
+  await w.clock.set(T0 + 3 * 60 * MIN)
+  await w.press('warm')
+  await w.user('hello', 'u1')
+  w.usage = COLD
+  await w.clock.advance(55 * MIN)
+  await w.pingTurn('p1')
+  // Paused as not caching; Resume, then the cap holds the next one.
+  expect(w.status()).toBe('Cache: paused')
+  w.usage = WARM
+  await w.press('resume')
+  await w.user('back', 'u2')
+  await w.clock.advance(55 * MIN)
+  expect(w.pings().length).toBe(1)
+})
+
 test('the Off bar explains the modes until a mode is first picked, then stays short', async ($, on) => {
   const w = world($, on)
   await w.start()

@@ -249,7 +249,7 @@ export function toView(
   const heartbeat = s.hasHeartbeat ? ' · also kept warm by the subagent heartbeat' : ''
   // What one ping would read here, from the last request's size.
   const perPing = s.lastPromptTokens
-    ? ` (each reads ~${fmtTokens(s.lastPromptTokens)} tokens from the cache; the first can cost more)`
+    ? ` (each re-reads the ~${fmtTokens(s.lastPromptTokens)}-token prompt from the cache; the first can rewrite part of it)`
     : ''
   const title = modeTitle(s.mode)
   const action: 'ping' | 'compaction' = nextAction(s) === 'compact' ? 'compaction' : 'ping'
@@ -258,7 +258,7 @@ export function toView(
   switch (st.kind) {
     case 'off':
       band = opts.firstUse
-        ? `Keep cache warm: off${left} · Keep warm pings before the cache expires; Compact summarizes the conversation once; Warm → compact pings, then summarizes · pings${perPing} and compactions are billed; it pauses after ${maxPings} pings in a row`
+        ? `Keep cache warm: off${left} · Keep warm pings before the cache expires and pauses after ${maxPings} in a row; Compact summarizes the conversation once; Warm → compact pings ${maxPings} times, then summarizes · pings${perPing} and compactions are billed`
         : `Keep cache warm: off${left} · billed pings${perPing}, pauses after ${maxPings} pings in a row`
       color = STATE_COLOR.off
       break
@@ -273,7 +273,7 @@ export function toView(
         s.pauseReason === 'not-caching'
           ? `‖ Paused: the last ping found the cache already cold, so it is not lasting an hour here${expired}`
           : s.pauseReason === 'daily'
-            ? `‖ Paused: ${opts.dailyCap ?? ''} ping${opts.dailyCap === 1 ? '' : 's'} today across all sessions, your daily cap; Resume goes on for this session today${expired}`
+            ? `‖ Paused: ${opts.dailyCap ?? ''} ping${opts.dailyCap === 1 ? '' : 's'} today across all sessions, your daily cap, until 00:00 UTC; Resume goes on for this session today${expired}`
             : `‖ Paused after ${maxPings} pings in a row with no message from you; send a message or press Resume${expired}`
       break
     }
@@ -287,7 +287,7 @@ export function toView(
           : isFiring(s, now)
             ? action === 'compaction'
               ? 'compacting'
-              : 'sending keep-alive ping'
+              : 'sending a keep-alive ping (automatic, not typed by you)'
             : `${action} held while background subagents run`
       band = `${title} · ${what}${left}`
       break

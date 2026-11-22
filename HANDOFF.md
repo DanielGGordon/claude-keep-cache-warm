@@ -17,7 +17,7 @@ Requirements it was built against (from the original ask):
 
 ## Current state (2026-11-20)
 
-Done and passing: `claude plugin validate .` (warnings only), `claude plugin test .` (51 of 51). Version 0.4.2: Resume past the daily cap goes on for that session today and a message lifts the cap pause; the paused bar no longer carries the totals (toast and note do); "✕ Cache expired" titles the cold state; one Desktop note per ping, under it. Version 0.4.1: cost-first session totals that include compactions, the per-ping size in the Off bar, the key route on the armed terminal bar. Version 0.4.0 adds a daily ping cap across sessions (`maxPingsPerDay`, kept in `$.store` as `pingDay`), a one-time mode explainer (`hasPicked` in `$.store`), the relative cost of a ping, and `Cache: cold` once the cache runs out while paused. Version 0.3.1 (session ping totals in toasts and the paused bar, a `fallbackPing` setting, a mode explainer while Off, (state marks ⏸ ✕ ✓, a rescued-by-ping state with the countdown kept, the key route first in the Off bar). Version 0.3.0 adds settings (`defaultMode`, `maxPings`), focus that follows the hotkey, and a fallback ping when a compaction fails.
+Done and passing: `claude plugin validate .` (warnings only), `claude plugin test .` (53 of 53). Version 0.4.3: a ping reserves its daily-cap slot before it is sent (released on a refusal or failure), a `statusLine` setting (`problems` hides the healthy countdown), the armed terminal bar adds the key route only when it fits on one row, clearer Off and in-flight texts. Version 0.4.2: Resume past the daily cap goes on for that session today and a message lifts the cap pause; the paused bar no longer carries the totals (toast and note do); "✕ Cache expired" titles the cold state; one Desktop note per ping, under it. Version 0.4.1: cost-first session totals that include compactions, the per-ping size in the Off bar, the key route on the armed terminal bar. Version 0.4.0 adds a daily ping cap across sessions (`maxPingsPerDay`, kept in `$.store` as `pingDay`), a one-time mode explainer (`hasPicked` in `$.store`), the relative cost of a ping, and `Cache: cold` once the cache runs out while paused. Version 0.3.1 (session ping totals in toasts and the paused bar, a `fallbackPing` setting, a mode explainer while Off, (state marks ⏸ ✕ ✓, a rescued-by-ping state with the countdown kept, the key route first in the Off bar). Version 0.3.0 adds settings (`defaultMode`, `maxPings`), focus that follows the hotkey, and a fallback ping when a compaction fails.
 
 | Area | State |
 |---|---|
@@ -53,6 +53,8 @@ Ping and compaction runs used a short-timer variant (`TTL_MS` 6 min, `MAX_PINGS`
 
 1. Machine sleep/wake across the deadline (a wall-clock jump past expiry was simulated; see below).
 2. macOS. (Linux: the CLI was run on Ubuntu with `--setting-sources project --plugin-dir`, short timers: bar, hotkeys, two labelled pings answered, countdown and status line all as on Windows.)
+
+- The daily cap's shared count is read-then-written through `$.store` (no lock): two sessions firing in the same instant can both take the last slot. The window is one store round trip.
 
 ### Known small issues (from the Fable 5.2 code review, all low severity)
 
