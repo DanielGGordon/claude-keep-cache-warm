@@ -76,6 +76,7 @@ export const INITIAL: KeepWarm = {
   isTouched: false,
   pingTotals: { count: 0, read: 0, written: 0, out: 0, compactions: 0, compactTokens: 0 },
   lastPromptTokens: null,
+  capOverrideDay: null,
 }
 
 export type CacheState = {
@@ -238,13 +239,13 @@ export function toView(
   s: KeepWarm,
   now: number,
   isWaiting = false,
-  opts: { firstUse?: boolean; dailyCap?: number } = {},
+  opts: { firstUse?: boolean; dailyCap?: number; capOverridden?: boolean } = {},
 ): View {
   const st = cacheState(s, now, isWaiting)
   const left = st.remainingMs === null ? '' : ` · cache ${formatRemaining(st.remainingMs)} left`
   const sent =
     s.consecutivePings > 0
-      ? ` · ${s.consecutivePings} of ${maxPings} pings in a row`
+      ? ` · ${s.consecutivePings} of ${maxPings} automatic pings in a row`
       : ''
   const heartbeat = s.hasHeartbeat ? ' · also kept warm by the subagent heartbeat' : ''
   // What one ping would read here, from the last request's size.
@@ -273,7 +274,7 @@ export function toView(
         s.pauseReason === 'not-caching'
           ? `‖ Paused: the last ping found the cache already cold, so it is not lasting an hour here${expired}`
           : s.pauseReason === 'daily'
-            ? `‖ Paused: ${opts.dailyCap ?? ''} ping${opts.dailyCap === 1 ? '' : 's'} today across all sessions, your daily cap, until 00:00 UTC; Resume goes on for this session today${expired}`
+            ? `‖ Paused: ${opts.dailyCap ?? ''} ping${opts.dailyCap === 1 ? '' : 's'} today across all sessions, your daily cap, until 00:00 UTC (then it goes on by itself if the cache is still warm); Override goes on for this session today${expired}`
             : `‖ Paused after ${maxPings} pings in a row with no message from you; send a message or press Resume${expired}`
       break
     }
@@ -333,7 +334,8 @@ export function toView(
         : st.kind === 'paused' && st.remainingMs === null && s.lastOutputAt !== null
           ? 'Cache: cold'
           : statusText(st),
-    band: band + heartbeat,
+    band: band + heartbeat + (opts.capOverridden && st.kind !== 'off' && st.kind !== 'paused' ? ' · daily cap overridden today' : ''),
+    pauseReason: st.kind === 'paused' ? s.pauseReason : null,
   }
 }
 

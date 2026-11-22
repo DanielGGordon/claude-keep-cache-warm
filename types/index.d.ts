@@ -59,6 +59,8 @@ export type KeepWarm = {
     compactions: number
     compactTokens: number
   }
+  /** The UTC day Resume overrode the daily cap for this session; null when not overridden. */
+  capOverrideDay: string | null
   /** Input tokens of the last main request: what a ping here would read. */
   lastPromptTokens: number | null
 }
@@ -83,6 +85,8 @@ export type View = {
   color: string
   status: string
   band: string
+  /** Why it is paused, when it is: the daily cap's Resume reads as an override. */
+  pauseReason: PauseReason | null
 }
 
 declare module 'claude-code' {

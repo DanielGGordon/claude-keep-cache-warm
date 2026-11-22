@@ -49,9 +49,9 @@ import {
 
 // One atom for all the logic state, so each change is one atomic update.
 // Change the tag when KeepWarm's fields change: it declines older values.
-const S = atom({ plugin: 'keep-cache-warm', key: 's' } as const, INITIAL, { shape: 'kw-8' })
+const S = atom({ plugin: 'keep-cache-warm', key: 's' } as const, INITIAL, { shape: 'kw-9' })
 // The derived display; the band reads only this, so it redraws only when the text changes.
-const V = atom({ plugin: 'keep-cache-warm', key: 'view' } as const, null, { shape: 'view-4' })
+const V = atom({ plugin: 'keep-cache-warm', key: 'view' } as const, null, { shape: 'view-5' })
 
 const fresh = (v: KeepWarm): KeepWarm => ({
   ...v,
@@ -94,8 +94,6 @@ export const register: Register = (on, options) => {
   /** No mode was ever picked on this machine: the Off bar explains the modes (kept in $.store). */
   let isFirstUse = true
   /** Resume was pressed on a daily-cap pause: the cap no longer holds this session (until the day changes). */
-  let isDailyOverride = false
-  let overrideDay: string | null = null
   const memStore = new Map<string, unknown>()
   let ops: Ops | null = null
   let pingTimer: Timer | null = null
@@ -149,7 +147,11 @@ export const register: Register = (on, options) => {
   }
 
   async function refresh(o: Ops, s: KeepWarm, now: number): Promise<void> {
-    const view = toView(s, now, isWaiting(), { firstUse: isFirstUse, dailyCap })
+    const view = toView(s, now, isWaiting(), {
+      firstUse: isFirstUse,
+      dailyCap,
+      capOverridden: dailyCap > 0 && s.capOverrideDay === dayOf(now),
+    })
     // While off there is nothing to say: no status line item (the terminal marks every one with a ⚠).
     // The statusLine setting "problems" keeps the line for paused, failed and cold only (the bar has the countdown).
     const isQuiet =
@@ -177,6 +179,7 @@ export const register: Register = (on, options) => {
   }
 
   function schedule(o: Ops, s: KeepWarm, now: number): void {
+    armRollover(o, s, now)
     const due = nextPingAt(s, now)
     const at = due === null ? null : Math.max(due, retryAfter)
     if (at === null) {
@@ -193,6 +196,25 @@ export const register: Register = (on, options) => {
       pingTimer = null
       pingDeadline = null
       void serial(firePing)
+    })
+  }
+
+  /** A daily-cap pause lifts itself at 00:00 UTC while the cache is still warm (the new day's count is 0). */
+  let rolloverTimer: Timer | null = null
+  function armRollover(o: Ops, s: KeepWarm, now: number): void {
+    rolloverTimer?.cancel()
+    rolloverTimer = null
+    if (s.pauseReason !== 'daily' || s.lastOutputAt === null || now >= s.lastOutputAt + TTL_MS) return
+    // Paused on an earlier day: the day has turned already, lift it now.
+    const isNewDay = s.pausedAt !== null && dayOf(s.pausedAt) !== dayOf(now)
+    const midnight = Date.UTC(new Date(now).getUTCFullYear(), new Date(now).getUTCMonth(), new Date(now).getUTCDate() + 1)
+    if (!isNewDay && midnight >= s.lastOutputAt + TTL_MS) return
+    rolloverTimer = o.after(isNewDay ? 0 : midnight - now + 1_000, () => {
+      rolloverTimer = null
+      void serial(async () => {
+        await o.set(v => (v.pauseReason === 'daily' ? { ...fresh(v) } : v))
+        await syncNow(o)
+      })
     })
   }
 
@@ -223,7 +245,7 @@ export const register: Register = (on, options) => {
       return
     }
     // The daily cap across sessions: a ping (not a compaction) over it pauses instead.
-    const isOverridden = isDailyOverride && overrideDay === dayOf(now)
+    const isOverridden = s.capOverrideDay === dayOf(now)
     if (dailyCap > 0 && !isOverridden && nextAction(s) === 'ping' && (await todayCount(o, now)) >= dailyCap) {
       await o.set(v => (v.pausedAt === null ? { ...v, pausedAt: now, pauseReason: 'daily' } : v))
       o.toast(`Keep cache warm paused: ${dailyCap} ping${dailyCap === 1 ? '' : 's'} today across all sessions, your daily cap.`)
@@ -284,7 +306,7 @@ export const register: Register = (on, options) => {
    */
   async function reserveToday(o: Ops, now: number): Promise<boolean> {
     const n = await todayCount(o, now)
-    const isOverridden = isDailyOverride && overrideDay === dayOf(now)
+    const isOverridden = (await o.get()).capOverrideDay === dayOf(now)
     if (dailyCap > 0 && !isOverridden && n >= dailyCap) return false
     o.storeSet('pingDay', { day: dayOf(now), count: n + 1 })
     return true
@@ -542,12 +564,9 @@ export const register: Register = (on, options) => {
     if (!ops) return
     retryAfter = 0
     const s = await ops.get()
-    // Resume past the daily cap is the person's say-so: this session goes on until tomorrow.
-    if (s.pauseReason === 'daily') {
-      isDailyOverride = true
-      overrideDay = dayOf(await ops.now())
-    }
-    await ops.set(fresh)
+    // Resume past the daily cap is the person's say-so: this session goes on until tomorrow (kept in $.state).
+    const day = dayOf(await ops.now())
+    await ops.set(v => ({ ...fresh(v), capOverrideDay: s.pauseReason === 'daily' ? day : v.capOverrideDay }))
     await sync()
   }
 
@@ -925,7 +944,13 @@ export const register: Register = (on, options) => {
     )
     const buttons = [
       view.kind === 'paused' && (
-        <Button key="resume" label="Resume" hotkey="r" variant="primary" onPress={resume} />
+        <Button
+          key="resume"
+          label={withKey(view.pauseReason === 'daily' ? 'Override cap today' : 'Resume', 'r')}
+          hotkey="r"
+          variant="primary"
+          onPress={resume}
+        />
       ),
       ...MODES.map((m, i) => (
         <Button
@@ -945,7 +970,9 @@ export const register: Register = (on, options) => {
     // The keyboard route, first thing in the Off bar on the terminal (it has no clicks in its classic renderer).
     const keyed =
       isTerminal && view.kind === 'off'
-        ? view.band.replace('Keep cache warm: off', 'Keep cache warm: off · ctrl+x tab, then w c or t')
+        ? view.band
+            .replace('Keep cache warm: off', 'Keep cache warm: off · ctrl+x tab, then w c or t')
+            .replace(/ \(each re-reads[^)]*\)/, '')
         : view.band
 
     // One row when the text and the buttons both fit; otherwise the text over the buttons, so
@@ -958,8 +985,10 @@ export const register: Register = (on, options) => {
     // A few cells spare: the engine's [-] mark and rounding.
     const fits = (t: string) => isTerminal && t.length + buttonsWidth + 6 <= e.props.bodyColumns
     // While armed, the key route rides along only where it does not push the buttons to a second row.
-    const withRoute = isTerminal && view.kind !== 'off' ? `${keyed} · ctrl+x tab for keys` : keyed
-    const text = fits(withRoute) ? withRoute : keyed
+    const longRoute = `${keyed} · ctrl+x tab for keys`
+    const shortRoute = `${keyed} · ctrl+x tab`
+    const text =
+      !isTerminal || view.kind === 'off' ? keyed : fits(longRoute) ? longRoute : shortRoute
     const fitsOneRow = fits(text)
 
     if (fitsOneRow) {

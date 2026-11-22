@@ -172,7 +172,7 @@ test('countdown floors minutes; one ping at +55m with the exact text; its own pi
   await w.pingTurn('p1')
   expect(w.toasts).toContain('Keep-alive ping sent to keep the prompt cache warm (1 of 8).')
   expect(w.status()).toBe('Cache: 60m')
-  expect(await w.bandText()).toContain('1 of 8 pings in a row')
+  expect(await w.bandText()).toContain('1 of 8 automatic pings in a row')
 
   // The count fallback does not count it twice.
   await w.clock.advance(2 * MIN)
@@ -632,6 +632,22 @@ test('Resume past the daily cap goes on for this session; a message lifts the ca
   expect(w.pings().length).toBe(2)
 })
 
+test('a daily-cap pause lifts itself at 00:00 UTC while the cache is still warm', { options: { maxPingsPerDay: 1 } }, async ($, on) => {
+  const w = world($, on)
+  await w.start()
+  // 22:07 UTC the next day: the second ping falls due at 23:57, two minutes before the cap resets.
+  await w.clock.set(T0 + 24 * 60 * MIN - 380_000)
+  await w.press('warm')
+  await w.user('hello', 'u1')
+  await w.clock.advance(55 * MIN)
+  await w.pingTurn('p1')
+  await w.clock.advance(55 * MIN)
+  expect(w.status()).toBe('Cache: paused')
+  expect(w.pings().length).toBe(1)
+  await w.clock.advance(5 * MIN)
+  expect(w.pings().length).toBe(2)
+})
+
 test('a message from the person lifts a daily-cap pause', { options: { maxPingsPerDay: 1 } }, async ($, on) => {
   const w = world($, on)
   await w.start()
@@ -694,7 +710,7 @@ test('the maxPings setting sets the budget', { options: { maxPings: 2 } }, async
   expect(await w.bandText()).toContain('Keeping cache warm')
   await w.clock.advance(55 * MIN)
   await w.pingTurn('p1')
-  expect(await w.bandText()).toContain('1 of 2 pings in a row')
+  expect(await w.bandText()).toContain('1 of 2 automatic pings in a row')
   await w.clock.advance(55 * MIN)
   await w.pingTurn('p2')
   expect(w.status()).toBe('Cache: paused')
@@ -744,7 +760,7 @@ test('switching modes while on keeps the ping budget; the bar has no Panel butto
   await w.clock.advance(55 * MIN)
   await w.pingTurn('p1')
   await w.press('warm-then-compact')
-  expect(await w.bandText()).toContain('1 of 8 pings')
+  expect(await w.bandText()).toContain('1 of 8 automatic pings')
   const ui = await w.band('desktop')
   expect(await ui.find({ key: 'panel' })).toBeUndefined()
   await ui.unmount()
